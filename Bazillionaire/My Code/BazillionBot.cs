@@ -70,7 +70,7 @@ namespace bazillionaire
         }
         public DiscordClient Client { get; private set; }
         public CommandsNextExtension Commands { get; private set; }
-        public const string PathToConfig = "C:/Users/joema/source/repos/LearningCSharp/Discord Bot/ConfigStuff/";
+        public const string PathToConfig = "ConfigStuff/";
         world theWorld;
         public async Task RunAsync()
         {
