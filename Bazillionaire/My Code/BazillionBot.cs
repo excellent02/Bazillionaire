@@ -16,7 +16,7 @@ using System.Threading;
 using System.Runtime.InteropServices.WindowsRuntime;
 using System.Text.RegularExpressions;
 using System.Security.Cryptography.X509Certificates;
-//Testing
+//Test
 namespace bazillionaire
 {
     public struct ConfigJson
