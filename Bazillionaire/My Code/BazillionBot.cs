@@ -16,6 +16,9 @@ using System.Threading;
 using System.Runtime.InteropServices.WindowsRuntime;
 using System.Text.RegularExpressions;
 using System.Security.Cryptography.X509Certificates;
+using System.Drawing;
+using System.Drawing.Imaging;
+using System.Drawing.Drawing2D;
 //Testing
 namespace bazillionaire
 {
@@ -85,6 +88,7 @@ namespace bazillionaire
             Client.MessageCreated += theWorld.Map;
             Client.MessageCreated += theWorld.Help;
             Client.MessageCreated += theWorld.Cheat;
+            Client.MessageCreated += theWorld.Catalog;
             await Client.ConnectAsync();
             while(true)
             {
@@ -109,7 +113,7 @@ namespace bazillionaire
                     }
                     if (!alreadyAdded)
                     {
-                        theWorld.players.Add(new player(e.Message.Author, theWorld.planets[4]));
+                        theWorld.players.Add(new player(e.Message.Author, theWorld.planets[4], e.Message.Channel));
                         e.Message.RespondAsync($"Sucessfully added {e.Message.Author.Username} to the list of players");
                     }
                 }
@@ -144,7 +148,7 @@ namespace bazillionaire
         // For example the current location in player is stored as a string instead of a planet object. We iterate over the entire planet list until we find a name that maches  the string currLocation
         public async Task Status(MessageCreateEventArgs e) //Current status of the player and their ship
         {
-            if (e.Message.Content.ToLower() == "status")
+            if (e.Message.Content.ToLower().Contains("status"))
             {
                 foreach (player questionPlayer in players)
                 {
@@ -312,34 +316,46 @@ namespace bazillionaire
         public async Task Map(MessageCreateEventArgs e)
         {
             if (e.Message.Content.ToLower().StartsWith("map"))
-            {
                 foreach (player thePlayer in players)
-                {
                     if (e.Message.Author == thePlayer.thePlayer)
                     {
-                        await e.Message.RespondAsync($"{thePlayer.thePlayer.Username} here is your map");
-                        if (thePlayer.currLocation.planetName.ToLower().Contains("food"))
-                            await e.Message.RespondWithFileAsync("inFood.png");
-                        else if (thePlayer.currLocation.planetName.ToLower().Contains("market"))
-                            await e.Message.RespondWithFileAsync("inMarket.png");
-                        else if (thePlayer.currLocation.planetName.ToLower().Contains("circuit"))
-                        {
-                            await e.Message.RespondWithFileAsync("inCircuit.png");
-                        }
-                        else if (thePlayer.currLocation.planetName.ToLower().Contains("orion"))
-                            await e.Message.RespondWithFileAsync("inOrion.png");
-                        else if (thePlayer.currLocation.planetName.ToLower().Contains("spite"))
-                            await e.Message.RespondWithFileAsync("inSpite.png");
-                        else if (thePlayer.currLocation.planetName.ToLower().Contains("gprofess"))
-                            await e.Message.RespondWithFileAsync("inG.png");
-                        else if (thePlayer.currLocation.planetName.ToLower().Contains("water"))
-                            await e.Message.RespondWithFileAsync("inWater.png");
-                        else
-                            await e.Message.RespondWithFileAsync("defaultMap.png");
-                    }
+                        //Setup basic stuff
+                        System.Drawing.RectangleF destinationRectangle;
+                        Image newImage = new Bitmap(1103, 640);
+                        Graphics newCanvas = Graphics.FromImage(newImage);
 
-                }
-            }
+                        string[] planetFiles = Directory.GetFiles("Images/Planets/");
+                        GraphicsUnit units = GraphicsUnit.Pixel;
+
+                        int sizeX = 960;
+                        int sizeY = 720;
+                        RectangleF sourceRectangle = new RectangleF(0, 0, sizeX, sizeY);
+                        
+                        //Draw bkacround
+                        destinationRectangle = new RectangleF(0, 0, 1103, 640);
+                        Image tempImage = Image.FromFile("Images/Blank.jpg");
+                        newCanvas.DrawImage(tempImage, destinationRectangle, destinationRectangle, units);
+                        tempImage.Dispose();
+
+                        //Draw planets
+                        foreach (string planetFile in planetFiles)
+                        {
+                            string thePlanet = getPlanetFromString(planetFile);
+                            foreach (planet planet in planets)
+                            {
+                                if (planet.planetName == thePlanet)
+                                {
+                                    destinationRectangle = new RectangleF((float)(planet.xLoc + sizeX / 2), (float)(planet.yLoc + sizeY / 2), sizeX, sizeY);
+                                    tempImage = Image.FromFile(planetFile);
+                                    newCanvas.DrawImage(tempImage, destinationRectangle, sourceRectangle, units);
+                                    tempImage.Dispose();
+                                }
+                            }
+                        }
+                        //Print to discord!
+                        newImage.Save("Images/Map/currentMap.jpg");
+                        await e.Message.RespondWithFileAsync("Images/Map/currentMap.jpg");
+                    }
         }
         public async Task Upgrade(MessageCreateEventArgs e)
         {
@@ -398,9 +414,57 @@ namespace bazillionaire
                                     await e.Message.RespondAsync($"For Upgrade information, type 'upgrade info'. To make a purcahse, type 'upgrade buy'");
                                 }
                             }
-
+                            if (player.destination.planetName.ToLower().Contains("shin"))
+                            {
+                                upgradeFlag = true;
+                                if (e.Message.Content.ToLower().Contains("info"))
+                                {
+                                    await e.Message.RespondAsync($"Shin-Akihabara can give you permanent vision on a specific item for a specific planet. The more you upgrade the vision the more information you can see. Format is upgrade [planet name] [item]. Cost is 500 shmeckles an upgrade");
+                                    return;
+                                }
+                                string upgradeItem = getItemFromString(e.Message.Content);
+                                string upgradePlanet = getPlanetFromString(e.Message.Content);
+                                if (upgradeItem != "")
+                                {
+                                    if (upgradePlanet != "")
+                                    {
+                                        if (player.shmeckles > 500)
+                                        {
+                                            foreach (itemUpgrade upgrade in player.upgrades)
+                                            {
+                                                if (upgrade.visionPlanet.planetName == upgradePlanet && upgrade.visionItem.itemName == upgradeItem)
+                                                {
+                                                    if (upgrade.upgradeLevel > 2)
+                                                    {
+                                                        await e.Message.RespondAsync("You already have the maximum vision of that item at all times.");
+                                                        return;
+                                                    }
+                                                    upgrade.upgradeLevel++;
+                                                    player.shmeckles -= 500;
+                                                    await e.Message.RespondAsync($"Sucessfully upgraded your vision of {upgradeItem} on {upgradePlanet} to level {upgrade.upgradeLevel} for 500 shmeckles");
+                                                    return;
+                                                }
+                                            }
+                                            foreach (planet planet in planets)
+                                                foreach(planetItem item in planet.items)
+                                                    if(planet.planetName == upgradePlanet && item.itemName == upgradeItem)
+                                                    {
+                                                        player.upgrades.Add(new itemUpgrade(planet, item));
+                                                        await e.Message.RespondAsync($"Sucessfully upgraded your vision of {upgradeItem} on {upgradePlanet} to level 0 for 500 shmeckles");
+                                                        return;
+                                                    }
+                                        }
+                                        else
+                                            await e.Message.RespondAsync("Not enough money for this upgrade!");
+                                    }
+                                    else
+                                        await e.Message.RespondAsync("Couldnt find a valid planet to get vision on in this upgrade request");
+                                }
+                                else
+                                    await e.Message.RespondAsync("Couldnt find a valid item to upgrade in this upgrade request");
+                            }
                             if (!upgradeFlag)
-                                await e.Message.RespondAsync($"There are no available upgrades for this planet (yet). or you're in space, this is temporary anyways go away");
+                                await e.Message.RespondAsync($"There are no available upgrades for this planet (yet). or you're in space!");
                         }
             }
         }
@@ -483,6 +547,37 @@ namespace bazillionaire
                 }
             }
         }
+        public async Task Catalog(MessageCreateEventArgs e)
+        {
+            if (e.Message.Content.ToLower().Contains("catalog"))
+            {
+                foreach (player questionPlayer in players)
+                {
+                    if (questionPlayer.thePlayer == e.Message.Author) //This is the player asking for a catalog
+                    {
+                        if (questionPlayer.travelTimeLeft < 1)
+                        {
+                            planet getPlanetCatalog = questionPlayer.currLocation;
+                            if (getPlanetFromString(e.Message.Content) != "") //We're trying to get the catalog from another planet
+                            {
+                                foreach (planet planet in planets)
+                                {
+                                    if (planet.planetName == getPlanetFromString(e.Message.Content)) //This is the planet we're trying to get the catalog from
+                                    {
+                                        getPlanetCatalog = planet;
+                                    }
+                                }
+                            }
+                                await e.Message.RespondAsync($"{getPlanetCatalog.planetName}'s catalog is as follows:");
+                                string planetOptionsString = "\n /=====================================\\";
+                                planetOptionsString += getPlanetCatalog.ToString(questionPlayer.upgrades, questionPlayer.currLocation);
+                                await e.Message.RespondAsync(planetOptionsString + "\n\\=====================================/");
+                                return;
+                        }
+                    }
+                }
+            }
+        }
 
         private string getItemFromString(string theString)
         {
@@ -529,9 +624,7 @@ namespace bazillionaire
             if (theString.ToLower().Contains("marketplace"))
                 return "Marketplace";
             else
-            {
                 return "";
-            }
 
         }
         public void tickWorld()
@@ -570,13 +663,14 @@ namespace bazillionaire
     class player
     {
         //=====================================User Information
-        public player(DiscordUser thePlayer, planet startLocation)
+        public player(DiscordUser thePlayer, planet startLocation, DiscordChannel responseChannel)
         {
             this.thePlayer = thePlayer;
+            this.responseChannel = responseChannel;
             shmeckles = 5000;
             storage = 200;//Units of stuff
             playerItems = new List<playerItem>();
-            travelTimeLeft = 0;
+            travelTimeLeft = -10;
             shipSpeed = 3;
 
             playerItems.Add(new playerItem("Food"));
@@ -594,12 +688,15 @@ namespace bazillionaire
             xLoc = startLocation.xLoc;
             yLoc = startLocation.yLoc;
             storageTotal = storage;
+
+            upgrades = new List<itemUpgrade>();
         }
         public DiscordUser thePlayer { get; set; }
         public List<playerItem> playerItems;
         public int shmeckles { get; set; }
         public int storageTotal { get; set; } //Maximum possible stroage
         public int storage { get; set; } //Currently used storage. Is never > storageTotal
+        DiscordChannel responseChannel;
         // ====================================Commerce methods
         public async Task Buy(MessageCreateEventArgs e)
         {
@@ -721,12 +818,14 @@ namespace bazillionaire
                 travelTimeLeft = ((double)distanceToDestination) / shipSpeed * 3600; // Divid 1 parsec by 1 parsec per hour and you're left with 1 hour. 1 parsec by 2 parsecs per hour leaves you 1/2 hour. Multiply by 3600 to get seconds
                 travelTimeLeft = (int)travelTimeLeft;
             }
-            if (travelTimeLeft <= secondsPerTick + 5)
+            else if (travelTimeLeft <= secondsPerTick + 5) // We have arrived!
             {
                 currLocation = destination;
                 xLoc = currLocation.xLoc;
                 yLoc = currLocation.yLoc;
-                travelTimeLeft = 0;
+                if (travelTimeLeft != -10)
+                    responseChannel.SendMessageAsync($"Welcome to {currLocation.planetName} {thePlayer.Mention} \n" + currLocation.getRandomFlavorText());
+                travelTimeLeft = -10;
             }
         }
         public async Task travelTo(planet destination, MessageCreateEventArgs e)
@@ -752,7 +851,8 @@ namespace bazillionaire
         }
         public double xLoc { get; set; }
         public double yLoc { get; set; }
-        // ======================
+        // ==============================Misc
+        public List<itemUpgrade> upgrades;
     };
     class playerItem
     {
@@ -764,12 +864,22 @@ namespace bazillionaire
         public string itemName { get; private set; }
         public int quantityLeft { get; set; }
     }
+    public class itemUpgrade //Constant vision on a single item for the player. These are bought
+    {
+        public itemUpgrade(planet visionPlanet, planetItem visionItem)
+        {
+            this.visionItem = visionItem;
+            this.visionPlanet = visionPlanet;
+            upgradeLevel = 0;
+        }
+        public planet visionPlanet;
+        public planetItem visionItem;
+        public int upgradeLevel;
+    }
     public class planet
     {
         public planet(string planetName, int distanceMultiplier) //Planet name determines location and item setups
         {
-            // Notes. 20/hrs production should be the planets main production. Secondary productions should be <10. consumptions should be >-10 unless there is a good reason for it
-            // TODO: make most of the production values non arbitrary :p
             this.orbitalRadius = distanceMultiplier;
             if (planetName.ToLower() == "medusa")
             {
@@ -782,19 +892,19 @@ namespace bazillionaire
                 items = new List<planetItem>();
 
                 //Essential Stuff
-                items.Add(new planetItem("Food", 100, 100, -8, 200));
-                items.Add(new planetItem("Spice", 100, 100, -5, 200));
-                items.Add(new planetItem("Water", 100, 100, -12, 200));
+                items.Add(new planetItem("Food", "avg", -5));
+                items.Add(new planetItem("Spice", "high", -10));
+                items.Add(new planetItem("Water", "extreme", -15));
 
 
                 //Production Stuff
-                items.Add(new planetItem("Electronics", 100, 100, -1, 200));
-                items.Add(new planetItem("Ore", 100, 100, 20, 200));
-                items.Add(new planetItem("Fuel", 100, 100, -1, 200));
+                items.Add(new planetItem("Electronics", "avg" , -5));
+                items.Add(new planetItem("Ore", "low" , 35));
+                items.Add(new planetItem("Fuel", "low", 15));
 
                 //Exotic Stuff
-                items.Add(new planetItem("Consumer Goods", 100, 500, 0, 200));
-                items.Add(new planetItem("Aoemebae", 100, 200, -1, 200));
+                items.Add(new planetItem("Consumer Goods", "avg", -5));
+                items.Add(new planetItem("Aoemebae", "avg", -5));
             }
             else if (planetName.ToLower() == "rockefeller reach")
             {
@@ -807,19 +917,19 @@ namespace bazillionaire
                 items = new List<planetItem>();
 
                 //Essential Stuff
-                items.Add(new planetItem("Food", 100, 100, -8, 200));
-                items.Add(new planetItem("Spice", 100, 100, 15, 200));
-                items.Add(new planetItem("Water", 100, 100, -12, 200));
+                items.Add(new planetItem("Food", "avg", -5));
+                items.Add(new planetItem("Spice", "avg", -5));
+                items.Add(new planetItem("Water", "avg", -5));
 
 
                 //Production Stuff
-                items.Add(new planetItem("Electronics", 100, 100, -4, 200));
-                items.Add(new planetItem("Ore", 100, 100, 0, 200));
-                items.Add(new planetItem("Fuel", 100, 100, -2, 200));
+                items.Add(new planetItem("Electronics", "extreme", -15));
+                items.Add(new planetItem("Ore", "high", -10));
+                items.Add(new planetItem("Fuel", "low", 35));
 
                 //Exotic Stuff
-                items.Add(new planetItem("Consumer Goods", 100, 200, -4, 200));
-                items.Add(new planetItem("Aoemebae", 100, 300, -1, 200));
+                items.Add(new planetItem("Consumer Goods", "avg", -5));
+                items.Add(new planetItem("Aoemebae", "low", 15));
             }
             else if (planetName.ToLower() == "arrakis")
             {
@@ -831,20 +941,19 @@ namespace bazillionaire
                 yLoc = orbitalRadius * Math.Sin((orbitalPeriod + orbitalSkew) * orbitalSpeed);
                 items = new List<planetItem>();
 
-                //Essential Stuff
-                items.Add(new planetItem("Food", 100, 100, -8, 200));
-                items.Add(new planetItem("Spice", 100, 100, -5, 200));
-                items.Add(new planetItem("Water", 100, 100, -12, 200));
+                items.Add(new planetItem("Food", "avg", -5));
+                items.Add(new planetItem("Spice", "low", 35));
+                items.Add(new planetItem("Water", "avg", -5));
 
 
                 //Production Stuff
-                items.Add(new planetItem("Electronics", 100, 100, 16, 200));
-                items.Add(new planetItem("Ore", 100, 100, 0, 200));
-                items.Add(new planetItem("Fuel", 100, 100, -2, 200));
+                items.Add(new planetItem("Electronics", "avg", -5));
+                items.Add(new planetItem("Ore", "low", 15));
+                items.Add(new planetItem("Fuel", "extreme", -35));
 
                 //Exotic Stuff
-                items.Add(new planetItem("Consumer Goods", 100, 400, -4, 200));
-                items.Add(new planetItem("Aoemebae", 100, 300, -1, 200));
+                items.Add(new planetItem("Consumer Goods", "avg", -5));
+                items.Add(new planetItem("Aoemebae", "high", -10));
             }
             else if (planetName.ToLower() == "demeter")
             {
@@ -857,19 +966,19 @@ namespace bazillionaire
                 items = new List<planetItem>();
 
                 //Essential Stuff
-                items.Add(new planetItem("Food", 100, 100, 12, 200));
-                items.Add(new planetItem("Spice", 100, 100, -5, 200));
-                items.Add(new planetItem("Water", 100, 100, -6, 200));
+                items.Add(new planetItem("Food", "low", 35));
+                items.Add(new planetItem("Spice", "avg", -5));
+                items.Add(new planetItem("Water", "avg", -5));
 
 
                 //Production Stuff
-                items.Add(new planetItem("Electronics", 100, 100, -3, 200));
-                items.Add(new planetItem("Ore", 100, 100, -1, 200));
-                items.Add(new planetItem("Fuel", 100, 100, 4, 200));
+                items.Add(new planetItem("Electronics", "low", 15));
+                items.Add(new planetItem("Ore", "avg", -5));
+                items.Add(new planetItem("Fuel", "high", -10));
 
                 //Exotic Stuff
-                items.Add(new planetItem("Consumer Goods", 100, 200, -4, 200));
-                items.Add(new planetItem("Aoemebae", 100, 600, -1, 200));
+                items.Add(new planetItem("Consumer Goods", "extreme", -15));
+                items.Add(new planetItem("Aoemebae", "avg", -5));
             }
             else if (planetName.ToLower() == "persepolis")
             {
@@ -882,19 +991,19 @@ namespace bazillionaire
                 items = new List<planetItem>();
 
                 //Essential Stuff
-                items.Add(new planetItem("Food", 100, 100, -8, 200));
-                items.Add(new planetItem("Spice", 100, 100, -5, 200));
-                items.Add(new planetItem("Water", 100, 100, -12, 200));
+                items.Add(new planetItem("Food", "extreme", -15));
+                items.Add(new planetItem("Spice", "avg", -5));
+                items.Add(new planetItem("Water", "low", 15));
 
 
                 //Production Stuff
-                items.Add(new planetItem("Electronics", 100, 100, -3, 200));
-                items.Add(new planetItem("Ore", 100, 100, -9, 200));
-                items.Add(new planetItem("Fuel", 500, 500, 27, 200));
+                items.Add(new planetItem("Electronics", "low", 35));
+                items.Add(new planetItem("Ore", "avg", -5));
+                items.Add(new planetItem("Fuel", "avg", -5));
 
                 //Exotic Stuff
-                items.Add(new planetItem("Consumer Goods", 150, 400, -4, 200));
-                items.Add(new planetItem("Aoemebae", 100, 300, -1, 200));
+                items.Add(new planetItem("Consumer Goods", "high", -10));
+                items.Add(new planetItem("Aoemebae", "avg", -5));
             }
             else if (planetName.ToLower() == "shin-akihabara")
             {
@@ -907,19 +1016,19 @@ namespace bazillionaire
                 items = new List<planetItem>();
 
                 //Essential Stuff
-                items.Add(new planetItem("Food", 100, 100, -12, 200));
-                items.Add(new planetItem("Spice", 100, 100, -7, 200));
-                items.Add(new planetItem("Water", 100, 100, -14, 200));
+                items.Add(new planetItem("Food", "avg", -5));
+                items.Add(new planetItem("Spice", "low", 15));
+                items.Add(new planetItem("Water", "avg", -5));
 
 
                 //Production Stuff
-                items.Add(new planetItem("Electronics", 100, 100, -3, 200));
-                items.Add(new planetItem("Ore", 100, 100, 9, 200));
-                items.Add(new planetItem("Fuel", 500, 500, -8, 200));
+                items.Add(new planetItem("Electronics", "high", -10));
+                items.Add(new planetItem("Ore", "avg", -5));
+                items.Add(new planetItem("Fuel", "avg", -5));
 
                 //Exotic Stuff
-                items.Add(new planetItem("Consumer Goods", 100, 200, 14, 200));
-                items.Add(new planetItem("Aoemebae", 100, 300, 2, 200));
+                items.Add(new planetItem("Consumer Goods", "low", 35));
+                items.Add(new planetItem("Aoemebae", "extreme", -15));
             }
             else if (planetName.ToLower() == "delphi")
             {
@@ -932,19 +1041,19 @@ namespace bazillionaire
                 items = new List<planetItem>();
 
                 //Essential Stuff
-                items.Add(new planetItem("Food", 100, 100, 4, 200));
-                items.Add(new planetItem("Spice", 100, 100, 3, 200));
-                items.Add(new planetItem("Water", 100, 100, 6, 200));
+                items.Add(new planetItem("Food", "low", 15));
+                items.Add(new planetItem("Spice", "extreme", -15));
+                items.Add(new planetItem("Water", "high", -10));
 
 
                 //Production Stuff
-                items.Add(new planetItem("Electronics", 100, 100, -3, 200));
-                items.Add(new planetItem("Ore", 100, 100, -9, 200));
-                items.Add(new planetItem("Fuel", 500, 500, -8, 200));
+                items.Add(new planetItem("Electronics", "avg", -5));
+                items.Add(new planetItem("Ore", "avg", -5));
+                items.Add(new planetItem("Fuel", "avg", -5));
 
                 //Exotic Stuff
-                items.Add(new planetItem("Consumer Goods", 100, 200, 2, 200));
-                items.Add(new planetItem("Aoemebae", 100, 300, 21, 200));
+                items.Add(new planetItem("Consumer Goods", "avg", -5));
+                items.Add(new planetItem("Aoemebae", "low", 35));
             }
             else if (planetName.ToLower() == "aquarion")
             {
@@ -957,19 +1066,19 @@ namespace bazillionaire
                 items = new List<planetItem>();
 
                 //Essential Stuff
-                items.Add(new planetItem("Food", 100, 100, 4, 200));
-                items.Add(new planetItem("Spice", 100, 100, -1, 200));
-                items.Add(new planetItem("Water", 100, 100, 30, 200));
+                items.Add(new planetItem("Food", "high", -10));
+                items.Add(new planetItem("Spice", "avg", -5));
+                items.Add(new planetItem("Water", "low", 35));
 
 
                 //Production Stuff
-                items.Add(new planetItem("Electronics", 100, 100, -3, 200));
-                items.Add(new planetItem("Ore", 100, 100, -9, 200));
-                items.Add(new planetItem("Fuel", 500, 500, -8, 200));
+                items.Add(new planetItem("Electronics", "avg", -5));
+                items.Add(new planetItem("Ore", "extreme", -15));
+                items.Add(new planetItem("Fuel", "avg", -5));
 
                 //Exotic Stuff
-                items.Add(new planetItem("Consumer Goods", 100, 200, 2, 200));
-                items.Add(new planetItem("Aoemebae", 100, 300, 21, 200));
+                items.Add(new planetItem("Consumer Goods", "low", 15));
+                items.Add(new planetItem("Aoemebae", "avg", -5));
             }
             else
                 throw new System.ArgumentException($"{planetName} is not a valid planet name :|");
@@ -1013,6 +1122,130 @@ namespace bazillionaire
             }
             return retString;
         }
+        public string ToString(List<itemUpgrade> upgrades, planet currLocation)
+        {
+            string retString = "";
+            bool displayFlag = false;
+            foreach (planetItem item in items)
+            {
+                displayFlag = false;
+                foreach(itemUpgrade itemUpgrade in upgrades)
+                {
+                    if(itemUpgrade.visionPlanet == this && item == itemUpgrade.visionItem) // This player has an upgraded vision for this planet
+                    {
+                        displayFlag = true;
+                        if (currLocation == this)
+                            retString += $"\n_{item.quantityLeft}_ units of **{item.itemName}** at a price of *{(item.pricePerUnit).ToString("N2")} shmeckles* | Production Level: {item.productionRate} (Adv. Upgrade)";
+                        else
+                        {
+                            if (itemUpgrade.upgradeLevel == 0)
+                                retString += $"\n_{item.quantityLeft}_ units of **{item.itemName}** at a price of * ??? shmeckles | Not enough vision. Buy more upgrades!*";
+                            else if (itemUpgrade.upgradeLevel == 1)
+                                retString += $"\n_{item.quantityLeft}_ units of **{item.itemName}** at a price of *{(item.pricePerUnit).ToString("N2")} shmeckles*";
+                            else
+                                retString += $"\n_{item.quantityLeft}_ units of **{item.itemName}** at a price of *{(item.pricePerUnit).ToString("N2")} shmeckles* | Production Level: {item.productionRate} (Adv. Upgrade)";
+                        }
+                    }
+                }
+                if(displayFlag == false) //We didnt display the item via an upgrade
+                {
+                    if(currLocation != this) //We know absolutely nothing about this item.
+                        retString += $"\n_??? units of **{item.itemName}** at a price of *??? shmeckles* | No vision. Buy upgrades!";
+                    else
+                    {
+                        retString += $"\n_{item.quantityLeft}_ units of **{item.itemName}** at a price of *{(item.pricePerUnit).ToString("N2")} shmeckles*"; //We can display atleast basic info about this item because we're on the planet
+                    }
+                }
+            }
+            return retString;
+        }
+        public string getRandomFlavorText()
+        {
+            Random random = new Random();
+            int randomNum = random.Next(1, 2);
+
+            if(planetName == "Demeter")
+            {
+                switch(randomNum)
+                {
+                    case 1:
+                        return "A tiny, verdant moon distantly orbiting the spice-world Arrakis, Demeter once produced nearly all the edible produce of the Orion system’s residents.  The coalition’s scorched-earth tactics have rendered the food produced here scarce and highly valuable.";
+                    case 2:
+                        return "The plains of Demeter are a welcome sight in the mostly-inhospitable Orion system.  A lush and habitable world orbiting Arrakis, Demeter produces the foodstuffs to feed most of Orion’s human residents.  Due to its small size, Demeter is populated mainly by wealthy landowners; this also leads to it having a disproportionately large amount of Protectorate loyalists present.";
+                }
+            }
+            if (planetName == "Arrakis")
+            {
+                switch (randomNum)
+                {
+                    case 1:
+                        return "A massive, rocky planet in Orion’s habitable zone, Arrakis plays host to a massive network of subterranean caves and crevasses.  Within these caves can be found the elusive “spice,” a powerful pharmaceutical substance said to grant users heightened physical and mental capabilities.  Rumors contend that a species of massive worms lie in wait under the desert sands.";
+                    case 2:
+                        return "Beneath the deserts of Arrakis, innumerable gigantic worms have carved out a network of subterranean tunnels, within which precious “spice” can be mined and extracted.  A fiercely traded commodity due to its performance-enhancing abilities, the spice from Arrakis is a valuable investment for any prospective trader.";
+                }
+            }
+            if (planetName == "Aquarion")
+            {
+                switch (randomNum)
+                {
+                    case 1:
+                        return "Comprised mostly of rock and ice, Aquarion plays an important role as a source of relatively pure water for the Orion system.  While inhospitable, its position relative to the outer reaches of Orion makes it enticing for common traders.";
+                    case 2:
+                        return "A dwarf planet in the furthest reaches of Orion’s orbit, Aquarion is composed of such a large amount of ice that it has become an important source of clean water for the system.  Gigantic crawling “spiders” are situated across Aquarion’s surface, melting and purifying the ice into potable water for transport.";
+                }
+            }
+            if (planetName == "Persepolis")
+            {
+                switch (randomNum)
+                {
+                    case 1:
+                        return "The massive and pleasantly habitable planet of Persepolis contains most of the Orion system’s civilian residents, as well as the bulk of its heavy industry.  Sensitive electronics and manufacturing components can be bought and sold here.  These are an invaluable commodity in distant locales where it would otherwise be difficult to manufacture them on-site.";
+                    case 2:
+                        return "The stark beacon of human civilization within the Orion system, Persepolis is home to the vast majority of the system’s population.  The density of its residents has led to the establishment of a hive of manufacturing and engineering, which produces much of the electronics and sensitive components used in construction projects across Orion.  Somewhat unpleasant conditions here have led to public discontent against a lack of Protectorate oversight, and have created a large number of PRC sympathizers, even after their defeat at Cannae.";
+                }
+            }
+            if (planetName == "Medusa")
+            {
+                switch (randomNum)
+                {
+                    case 1:
+                        return "Construction on an interstellar scale demands an abundance of raw material, and the rocky plains of Medusa provide a fitting source for this material.  While heavy and difficult to transport, the ores mined here are in demand across the Orion system.";
+                    case 2:
+                        return "A hunk of metallic ores and sturdy material close to the star Orion, Medusa produces much of the raw components needed to build structures across the system.  While heavy, these materials are always in demand and are particularly valuable on worlds that have the capability to refine them.";
+                }
+            }
+            if (planetName == "Rockefellers Reach")
+            {
+                switch (randomNum)
+                {
+                    case 1:
+                        return "Fuel and its refining remains an important component in the human industrial machine.  An old planet with a strange, nearly-gaseous core, Rockefeller’s reach is the site of a great deal of fuel mining and processing.";
+                    case 2:
+                        return "Without the massive refineries of Rockefeller’s Reach, the engine of human progress cannot run in Orion.  The only site capable of producing large enough quantities of fuel to support industrial operations in the system, the Reach remains a hotly contested prize among interstellar traders.";
+                }
+            }
+            if (planetName == "Shin-Akihabara")
+            {
+                switch (randomNum)
+                {
+                    case 1:
+                        return "While consumer goods are produced in typical quantities on Persepolis, its moon Shin-Akihabara produces a great deal of unconventional goods.  Protectorate public-morals codes prevent the export of some of the more seedy merchandise, but harmless products such as figurines and animated media have become something of a curiosity among residents of the Orion system.";
+                    case 2:
+                        return "An enclave of Orion’s more eccentric populace, Shin-Akihabara produces a wide variety of strange and exotic consumer goods.  These are less practical than those made on Persepolis, but the level of luxury they provide is a welcome comfort to the rich and poor alike.";
+                }
+            }
+            if (planetName == "Delphi")
+            {
+                switch (randomNum)
+                {
+                    case 1:
+                        return "A truly alien world on the outskirts of Orion, Delphi is the home of a vast hive-like population of amoebae which are theorized to possess near-human intelligence when arranged in large enough colonies.  They are the subject of fervent research among Orion scientists, and command a high price at the interstellar market.";
+                    case 2:
+                        return "Forays into space have revealed to humanity that interstellar life is not so rare as initially theorized- rather, it tends to be found in the form of single-celled organisms billions of years away from any meaningful evolution.  The amoebae found on Delphi are an outlier in this regard.  While their intelligence is difficult to comprehend by human standards, they are an important object of research across Protectorate-controlled space.";
+                }
+            }
+            return $"Couldnt find flavortext for {planetName}. this is an error";
+        }
         public string planetName;
         public List<planetItem> items;
 
@@ -1027,21 +1260,46 @@ namespace bazillionaire
     };
     public class planetItem
     {
-        public planetItem(string itemName, int initQuantity, int quantityExpected, double productionRate, int basePrice)
+        public planetItem(string itemName, string demand, double productionRate)
         {
+            //Different levels of demand.
+            // 60 basePrice .120 expectedQuantity. | Low demand. Low Price - 2 per planet. stuff they produce
+            //100 base 210 expect | Average Demand. Average Price - 4 per planet. Stuff moderatly consumed
+            //160 base 350 expect | High Demand. High Price - 1 per planet stuff highly consumed
+            //220 base 500 expect | Extreme Demand. - 1 per planet stuff extremely consumed
+            //Using values outside of these will lead to undefined behavior
+
+            if (demand.ToLower().Contains("low"))
+            {
+                this.basePrice = 60;
+                this.quantityExpected = 120;
+            }
+            else if (demand.ToLower().Contains("avg"))
+            {
+                this.basePrice = 100;
+                this.quantityExpected = 210;
+            }
+            else if (demand.ToLower().Contains("high"))
+            {
+                this.basePrice = 160;
+                this.quantityExpected = 350;
+            }
+            else
+            {
+                this.basePrice = 220;
+                this.quantityExpected = 500;
+            }
+
             this.itemName = itemName;
-            quantityLeft = initQuantity;
+            quantityLeft = quantityExpected;
             this.productionRate = productionRate;
             progressToNextItem = 0.0;
 
-            pricePerUnit = 100;
-            this.quantityExpected = quantityExpected;
-
-            this.basePrice = basePrice;
+            pricePerUnit = ((-(Math.Log(quantityLeft / quantityExpected))) / (.02)) + quantityExpected / 2; //Really weird math function I know. But if the guide is stuck to above it gets values that make sense, shortages drive the price up faster than surpluses
         }
         public string itemName { get; private set; }
         public int quantityLeft { get; set; }
-        private double productionRate; //How much of this produced per hour. Negative values mean it is consumed
+        public double productionRate; //How much of this produced per hour. Negative values mean it is consumed
         private double progressToNextItem; //Any number above 1 will be removed at the next production step and added to quantityLeft
 
         public double pricePerUnit { get; private set; }
@@ -1053,11 +1311,12 @@ namespace bazillionaire
         {
             double targetPrice = 0;
 
-            targetPrice = (-(Math.Log(quantityLeft/quantityExpected)))/(basePrice * .02);
+            targetPrice = (-(Math.Log(quantityLeft/quantityExpected)))/(.02) + quantityExpected/2;
+            Console.WriteLine($"Target Price is: {targetPrice}");
             if (targetPrice < (double)(basePrice - basePrice * .25))
                 targetPrice = basePrice - basePrice * .25;
-            if (targetPrice > (double)(basePrice + basePrice * .25))
-                targetPrice = (basePrice + basePrice * .25);
+            if (targetPrice > (double)(basePrice + basePrice * .35))
+                targetPrice = (basePrice + basePrice * .35);
 
 
                 double maxAdd = ((double)20 / 3600 * secondsPerTick);
