@@ -19,6 +19,7 @@ using System.Security.Cryptography.X509Certificates;
 using System.Drawing;
 using System.Drawing.Imaging;
 using System.Drawing.Drawing2D;
+using System.Transactions;
 //Testing
 namespace bazillionaire
 {
@@ -89,6 +90,7 @@ namespace bazillionaire
             Client.MessageCreated += theWorld.Help;
             Client.MessageCreated += theWorld.Cheat;
             Client.MessageCreated += theWorld.Catalog;
+            Client.MessageCreated += theWorld.MakeChoice;
             await Client.ConnectAsync();
             while(true)
             {
@@ -98,36 +100,44 @@ namespace bazillionaire
         }
         private Task AddPlayer(MessageCreateEventArgs e)
         {
-                if (e.Message.Content.StartsWith("Add") || e.Message.Content.StartsWith("add"))
+            if ((e.Message.Content.StartsWith("Add") || e.Message.Content.StartsWith("add")) && e.Channel.IsPrivate)
+            {
+                bool alreadyAdded = false;
+                if (e.Message.Author.Username == "Mad") //Never add the bot to the list of players
+                    alreadyAdded = true;
+                foreach(player checkUser in theWorld.players)
                 {
-                    bool alreadyAdded = false;
-                    if (e.Message.Author.Username == "Mad") //Never add the bot to the list of players
-                        alreadyAdded = true;
-                    foreach(player checkUser in theWorld.players)
+                    if(checkUser.thePlayer.Username == e.Message.Author.Username)
                     {
-                        if(checkUser.thePlayer.Username == e.Message.Author.Username)
+                        alreadyAdded = true;
+                        e.Message.RespondAsync($"{e.Message.Author.Username}, you are already on the list of players.");
+                    }
+                }
+                if (!alreadyAdded)
+                {
+                    player newPlayer = new player(e.Message.Author, theWorld.planets[4], e.Message.Channel, e.Author.Username);
+                    theWorld.players.Add(newPlayer);
+                    foreach (planet modPlanet in theWorld.planets) //Set up modifiers for every item on every planet in the game, so they can be manipulated on a per player basis at will.
+                    {
+                        foreach (planetItem modItem in modPlanet.items)
                         {
-                            alreadyAdded = true;
-                            e.Message.RespondAsync($"{e.Message.Author.Username}, you are already on the list of players.");
+                            newPlayer.modifiers.Add(new itemModifier(modPlanet, modItem));
                         }
                     }
-                    if (!alreadyAdded)
-                    {
-                        theWorld.players.Add(new player(e.Message.Author, theWorld.planets[4], e.Message.Channel));
-                        e.Message.RespondAsync($"Sucessfully added {e.Message.Author.Username} to the list of players");
-                    }
+                    e.Message.RespondAsync($"Sucessfully added {e.Message.Author.Username} to the list of players");
                 }
-                if((e.Message.Content.Contains("Start") || e.Message.Content.Contains("start")) && !theWorld.gameStarted)
+            }
+            if((e.Message.Content.Contains("Start") || e.Message.Content.Contains("start")) && !theWorld.gameStarted && (e.Message.Author.Username.ToLower() == "excellent"))
+            {
+                theWorld.gameStarted = true;
+                string playerString = new string("");
+                foreach(player stringAdd in theWorld.players)
                 {
-                    theWorld.gameStarted = true;
-                    string playerString = new string("");
-                    foreach(player stringAdd in theWorld.players)
-                    {
-                        playerString += stringAdd.thePlayer.Username.ToString();
-                        playerString += ", ";
-                    }
-                    e.Message.RespondAsync($"Started game with these players: {playerString}");
+                    playerString += stringAdd.thePlayer.Username.ToString();
+                    playerString += ", ";
                 }
+                e.Message.RespondAsync($"Started game with these players: {playerString}");
+            }
 
             return Task.CompletedTask;
         }
@@ -148,6 +158,9 @@ namespace bazillionaire
         // For example the current location in player is stored as a string instead of a planet object. We iterate over the entire planet list until we find a name that maches  the string currLocation
         public async Task Status(MessageCreateEventArgs e) //Current status of the player and their ship
         {
+            if (!e.Message.Channel.IsPrivate)
+                if (e.Message.Channel.Name.ToLower() != "bazillionaire")
+                    return;
             if (e.Message.Content.ToLower().Contains("status"))
             {
                 foreach (player questionPlayer in players)
@@ -158,9 +171,7 @@ namespace bazillionaire
                         if (questionPlayer.travelTimeLeft < 1)
                         {
                             await e.Message.RespondAsync($"You are currently on {questionPlayer.currLocation.planetName} its catalog is as follows:");
-                            string planetOptionsString = "\n /=====================================\\";
-                            planetOptionsString += questionPlayer.currLocation.ToString();
-                            await e.Message.RespondAsync(planetOptionsString + "\n\\=====================================/");
+                            await questionPlayer.ReadCatalog(questionPlayer.currLocation);
                         }
                         else
                         {
@@ -181,13 +192,16 @@ namespace bazillionaire
         }
         public async Task Options(MessageCreateEventArgs e) //Options the questioning player can take at the given moment of time
         {
+            if (!e.Message.Channel.IsPrivate)
+                if (e.Message.Channel.Name.ToLower() != "bazillionaire")
+                    return;
             if (e.Message.Content.ToLower() == "options")
             {
                 foreach (player questionPlayer in players)
                 {
                     if (questionPlayer.thePlayer == e.Message.Author) //This is the player that wants their options
                     {
-                        if(!(questionPlayer.travelTimeLeft > 1))
+                        if (!(questionPlayer.travelTimeLeft > 1))
                         {
                             await e.Message.RespondAsync($"Your are currently sitting on {questionPlayer.currLocation.planetName} and are ready to *buy* or *sell*. Otherwise you can *travel* to these other locations");
                             string planetOptionsString = "\n /=====================================\\";
@@ -213,31 +227,43 @@ namespace bazillionaire
         }
         public async Task Buy(MessageCreateEventArgs e)
         {
-            if(e.Message.Content.ToLower().StartsWith("buy"))
+            if (!e.Message.Channel.IsPrivate)
+                if (e.Message.Channel.Name.ToLower() != "bazillionaire")
+                    return;
+            if (e.Message.Content.ToLower().StartsWith("buy"))
             {
                 string itemToBuy = getItemFromString(e.Message.Content);
-                string convertToNumber = e.Message.Content;
-                string numberOnly = Regex.Replace(e.Message.Content, "[^0-9.]", "");
-                int quantityToBuy = Convert.ToInt32(numberOnly);
+                int quantityToBuy = 0;
                 if (itemToBuy == "")
                 {
                     await e.Message.RespondAsync("Couldnt find a valid item in this buy request. Review the planet catalog by typing 'status'. Proper format is buy [quantity] [item]");
                     return;
                 }
                 foreach (player player in players)
-                {
-                    if(player.thePlayer == e.Message.Author) //This is the player trying to buy something
+                    if (player.thePlayer == e.Message.Author) //This is the player trying to buy something
                     {
-                        player.nextSaleItem = itemToBuy;
-                        player.nextSaleQuantity = quantityToBuy;
-                        player.buying = true;
+                        if (player.playerStory.checkChoiceLock()) // This player isnt allowed to do anything else right now until they clear the story event choice
+                            return;
                         foreach (planetItem pItem in player.currLocation.items)
                         {
                             if (pItem.itemName == itemToBuy)
                             {
-                                if (e.Message.Content.ToLower().Contains("max") || quantityToBuy > 2000 || quantityToBuy < 0)
+                                if (e.Message.Content.ToLower().Contains("max"))
                                 {
                                     quantityToBuy = (int)(player.shmeckles / pItem.pricePerUnit);
+                                    player.nextSaleItem = pItem;
+                                    player.nextSaleQuantity = quantityToBuy;
+                                    player.buying = true;
+                                }
+                                else
+                                {
+                                    string convertToNumber = e.Message.Content;
+                                    string numberOnly = Regex.Replace(e.Message.Content, "[^0-9.]", "");
+                                    quantityToBuy = Convert.ToInt32(numberOnly);
+
+                                    player.nextSaleItem = pItem;
+                                    player.nextSaleQuantity = quantityToBuy;
+                                    player.buying = true;
                                 }
                                 if (pItem.itemName == itemToBuy)
                                     await e.Message.RespondAsync(pItem.getRandomFlavorText());
@@ -245,22 +271,22 @@ namespace bazillionaire
                             }
                         }
                     }
-                }
             }
         }
         public async Task Sell(MessageCreateEventArgs e)
         {
+            if (!e.Message.Channel.IsPrivate)
+                if (e.Message.Channel.Name.ToLower() != "bazillionaire")
+                    return;
             if (e.Message.Content.ToLower().StartsWith("sell"))
             {
+                int quantityToSell = 0;
                 if (e.Message.Content.ToLower().Contains("upgrade"))
                 {
                     await e.Message.RespondAsync("Sorry, no upgrade refunds");
                     return;
                 }
                 string itemToSell = getItemFromString(e.Message.Content);
-                string convertToNumber = e.Message.Content;
-                string numberOnly = Regex.Replace(e.Message.Content, "[^0-9.]", "");
-                int quantityToSell = Convert.ToInt32(numberOnly);
 
                 if (itemToSell == "")
                 {
@@ -271,18 +297,32 @@ namespace bazillionaire
                 foreach (player player in players)
                     if (player.thePlayer == e.Message.Author) //This is the player trying to buy something
                     {
-                        foreach(planetItem pItem in player.currLocation.items)
+                        if (player.playerStory.checkChoiceLock()) // This player isnt allowed to do anything else right now until they clear the story event choice
+                            return;
+                        foreach (planetItem pItem in player.currLocation.items)
                         {
                             if (pItem.itemName == itemToSell)
                             {
-                                if (e.Message.Content.ToLower().Contains("max") || quantityToSell > 2000 || quantityToSell < 0)
+                                if (e.Message.Content.ToLower().Contains("max"))
                                 {
-                                    quantityToSell = (int)(player.shmeckles / pItem.pricePerUnit);
+                                    foreach(playerItem playerItem in player.playerItems)
+                                    { 
+                                        if(playerItem.itemName.ToLower() == itemToSell.ToLower())
+                                        {
+                                            quantityToSell = (int)(playerItem.quantityLeft);
+                                        }
+                                    }
                                 }
-                                player.nextSaleItem = itemToSell;
+                                else
+                                {
+                                    string convertToNumber = e.Message.Content;
+                                    string numberOnly = Regex.Replace(e.Message.Content, "[^0-9.]", "");
+                                    quantityToSell = Convert.ToInt32(numberOnly);
+                                }
+                                player.nextSaleItem = pItem;
                                 player.nextSaleQuantity = quantityToSell;
                                 player.selling = true;
-                                await e.Message.RespondAsync($"Confirm buy ({quantityToSell} {itemToSell} @ {pItem.pricePerUnit.ToString("N2")} shmeckles)? (y/n)");
+                                await e.Message.RespondAsync($"Confirm sell ({quantityToSell} {itemToSell} @ {pItem.pricePerUnit.ToString("N2")} shmeckles)? (y/n)");
                             }
                         }
                     }
@@ -290,6 +330,9 @@ namespace bazillionaire
         }
         public async Task TravelTo(MessageCreateEventArgs e)
         {
+            if (!e.Message.Channel.IsPrivate)
+                if (e.Message.Channel.Name.ToLower() != "bazillionaire")
+                    return;
             if (e.Message.Content.ToLower().StartsWith("travel") || e.Message.Content.ToLower().StartsWith("move"))
             {
                 string planetName = getPlanetFromString(e.Message.Content);
@@ -305,16 +348,23 @@ namespace bazillionaire
                 }
                 foreach (player player in players)
                     if (player.thePlayer == e.Message.Author) // This is the player trying to travel
+                    {
+                        if (player.playerStory.checkChoiceLock()) // This player isnt allowed to do anything else right now until they clear the story event choice
+                            return;
                         foreach (planet destination in planets)
                             if (destination.planetName.ToLower() == planetName.ToLower()) // This is the planet the player is trying to go to
                             {
-                                    await player.travelTo(destination, e);
-                                    await e.Message.RespondAsync($"Confirmed {player.thePlayer.Username}! you're on your way to {player.destination.planetName} see you in {(player.travelTimeLeft / 60).ToString("N2")} minutes");
+                                await player.travelTo(destination, e);
+                                await e.Message.RespondAsync($"Confirmed {player.thePlayer.Username}! you're on your way to {player.destination.planetName} see you in {(player.travelTimeLeft / 60).ToString("N2")} minutes");
                             }
+                    }
             }
         }
         public async Task Map(MessageCreateEventArgs e)
         {
+            if (!e.Message.Channel.IsPrivate)
+                if (e.Message.Channel.Name.ToLower() != "bazillionaire")
+                    return;
             if (e.Message.Content.ToLower().StartsWith("map"))
                 foreach (player thePlayer in players)
                     if (e.Message.Author == thePlayer.thePlayer)
@@ -345,7 +395,8 @@ namespace bazillionaire
                             {
                                 if (planet.planetName == thePlanet)
                                 {
-                                    destinationRectangle = new RectangleF((float)(planet.xLoc + sizeX / 2), (float)(planet.yLoc + sizeY / 2), sizeX, sizeY);
+                                    Console.Write($"Found planet {planet.planetName} to draw");
+                                    destinationRectangle = new RectangleF((float)(planet.xLoc * 40), (float)(planet.yLoc * 40), sizeX, sizeY);
                                     tempImage = Image.FromFile(planetFile);
                                     newCanvas.DrawImage(tempImage, destinationRectangle, sourceRectangle, units);
                                     tempImage.Dispose();
@@ -359,6 +410,9 @@ namespace bazillionaire
         }
         public async Task Upgrade(MessageCreateEventArgs e)
         {
+            if (!e.Message.Channel.IsPrivate)
+                if (e.Message.Channel.Name.ToLower() != "bazillionaire")
+                    return;
             if (e.Message.Content.ToLower().StartsWith("upgrade"))
             {
                 if (e.Message.Content.ToLower().Contains("sell"))
@@ -368,7 +422,10 @@ namespace bazillionaire
                 }
                 bool upgradeFlag = false;
                 foreach (player player in players)
-                    if (player.thePlayer == e.Message.Author)
+                    if (player.thePlayer == e.Message.Author) // This is the player looking for an upgrade!
+                    {
+                        if (player.playerStory.checkChoiceLock()) // This player isnt allowed to do anything else right now until they clear the story event choice
+                            return;
                         if (player.travelTimeLeft <= 0)
                         {
                             if (player.destination.planetName.ToLower() == "persepolis")
@@ -430,7 +487,7 @@ namespace bazillionaire
                                     {
                                         if (player.shmeckles > 500)
                                         {
-                                            foreach (itemUpgrade upgrade in player.upgrades)
+                                            foreach (itemModifier upgrade in player.modifiers)
                                             {
                                                 if (upgrade.visionPlanet.planetName == upgradePlanet && upgrade.visionItem.itemName == upgradeItem)
                                                 {
@@ -445,14 +502,7 @@ namespace bazillionaire
                                                     return;
                                                 }
                                             }
-                                            foreach (planet planet in planets)
-                                                foreach(planetItem item in planet.items)
-                                                    if(planet.planetName == upgradePlanet && item.itemName == upgradeItem)
-                                                    {
-                                                        player.upgrades.Add(new itemUpgrade(planet, item));
-                                                        await e.Message.RespondAsync($"Sucessfully upgraded your vision of {upgradeItem} on {upgradePlanet} to level 0 for 500 shmeckles");
-                                                        return;
-                                                    }
+                                            //
                                         }
                                         else
                                             await e.Message.RespondAsync("Not enough money for this upgrade!");
@@ -466,18 +516,24 @@ namespace bazillionaire
                             if (!upgradeFlag)
                                 await e.Message.RespondAsync($"There are no available upgrades for this planet (yet). or you're in space!");
                         }
+                    }
             }
         }
         public async Task Help(MessageCreateEventArgs e)
         {
+            if (!e.Message.Channel.IsPrivate)
+                if (e.Message.Channel.Name.ToLower() != "bazillionaire")
+                    return;
             if (e.Message.Content.ToLower().StartsWith("help"))
                 await e.Message.RespondAsync($"Bazillionaire (this game) is an economic simulation game.\n " +
                     $"There are 8 planets and 8 products to trade. Its up to you to move product between planets to turn a profit. Some planets want specific product more than others and are willing to pay a high price for them.\n" +
                     $"You start with a measly 3 parsec a turn starship with 200 units of storage space. There are several commands to help you accomplish your tasks.\n" +
                     $"**Status** -- Gives the status of your ship, money and the catalog of the current planet you are on\n" +
                     $"**Options** -- Tells you what options are available to you at this given moment of time\n" +
-                    $"**Buy** *quantity* *item* -- Buys a certain amount of an item from the local planets at its current local value (Check the catalog with 'status'!)\n" +
-                    $"**Sell** *quantity* *item* -- Sells a certain amount of an item to the local planet at the current local value\n" +
+                    $"**Buy** [*quantity*] [*item*] -- Buys a certain amount of an item from the local planets at its current local value (Check the catalog with 'status'!)\n" +
+                    $"**Sell** [*quantity*] [*item*] -- Sells a certain amount of an item to the local planet at the current local value\n" +
+                    $"**Travel** [*planet*] -- Sets you on course to a specific planet. You can change your destination enroute" +
+                    $"**Catalog** [*planet*] -- Gives the current catalog of a specific planet. Leave blank for the current planet" +
                     $"**Upgrade** info -- gives information on what upgrades the current planet offers for your ship\n" +
                     $"**Upgrade** buy -- Purchases the upgrade your current planet offers at their asking price\n" +
                     $"**Help** -- Pulls this screen back up\n" +
@@ -485,9 +541,12 @@ namespace bazillionaire
         }
         public async Task Cheat(MessageCreateEventArgs e)
         {
+            if (!e.Message.Channel.IsPrivate)
+                if (e.Message.Channel.Name.ToLower() != "bazillionaire")
+                    return;
             if (e.Message.Content.ToLower().StartsWith("cheat"))
             {
-                if (e.Message.Author.Username.ToLower() != "Excellent")
+                if (e.Message.Author.Username.ToLower() == "excellent")
                 {
                     foreach (player player in players)
                         if (player.thePlayer == e.Message.Author)
@@ -500,10 +559,12 @@ namespace bazillionaire
                         }
                     if (e.Message.Content.ToLower().Contains("advance"))
                     {
-                        await e.Message.RespondAsync($"Advancing time by 480 seconds.. Persepolis's orbital period before is {planets[4].orbitalPeriod} and its position is {planets[4].xLoc}, {planets[4].yLoc}) ");
-                        for (int i = 0; i <= 48; i++)
+                        string convertToNumber = e.Message.Content;
+                        string numberOnly = Regex.Replace(e.Message.Content, "[^0-9.]", "");
+                        int timeToCheat = Convert.ToInt32(numberOnly);
+                        await e.Message.RespondAsync($"Advancing time by {timeToCheat} seconds..");
+                        for (int i = 0; i <= (timeToCheat/10); i++)
                             tickWorld();
-                        await e.Message.RespondAsync($"Advanced time. Persepolis's orbital period is now {planets[4].orbitalPeriod} and its position is {planets[4].xLoc}, {planets[4].yLoc})  ");
                     }
                 }
                 else
@@ -512,12 +573,17 @@ namespace bazillionaire
         }
         public async Task SaleConfirmation(MessageCreateEventArgs e)
         {
-            foreach(player confirmingPlayer in players)
+            if(!e.Message.Channel.IsPrivate)
+                if (e.Message.Channel.Name.ToLower() != "bazillionaire")
+                    return;
+            foreach (player confirmingPlayer in players)
             {
                 if(confirmingPlayer.buying || confirmingPlayer.selling)
                 {
-                    if (e.Message.Author == confirmingPlayer.thePlayer)
+                    if (e.Message.Author == confirmingPlayer.thePlayer) // This is the player trying to confirm
                     {
+                        if (confirmingPlayer.playerStory.checkChoiceLock()) // This player isnt allowed to do anything else right now until they clear the story event choice
+                            return;
                         if (e.Message.Content.ToLower() != "y" && e.Message.Content.ToLower() != "n")
                         {
                             confirmingPlayer.buying = false;
@@ -534,11 +600,29 @@ namespace bazillionaire
                             }
                             if (e.Message.Content.ToLower() == "y")
                             {
-                                Console.WriteLine("Actually Buying");
                                 if (confirmingPlayer.buying)
-                                    await confirmingPlayer.Buy(e);
+                                {
+                                    await confirmingPlayer.playerStory.triggerBuy();
+
+                                    if (confirmingPlayer.playerStory.checkEventLock())
+                                    {
+                                        await confirmingPlayer.responseChannel.SendMessageAsync("Skipping this buy due to story");
+                                        return;
+                                    }
+                                    else
+                                    {
+                                        await confirmingPlayer.responseChannel.SendMessageAsync("No story lock. not skipping buy");
+                                        await confirmingPlayer.Buy();
+                                    }
+                                }
                                 else
-                                    await confirmingPlayer.Sell(e);
+                                {
+                                    await confirmingPlayer.playerStory.triggerSell();
+                                    if (confirmingPlayer.playerStory.checkEventLock())
+                                        return;
+                                    else
+                                        await confirmingPlayer.Sell();
+                                }
                                 confirmingPlayer.buying = false;
                                 confirmingPlayer.selling = false;
                             }
@@ -549,6 +633,9 @@ namespace bazillionaire
         }
         public async Task Catalog(MessageCreateEventArgs e)
         {
+            if (!e.Message.Channel.IsPrivate)
+                if (e.Message.Channel.Name.ToLower() != "bazillionaire")
+                    return;
             if (e.Message.Content.ToLower().Contains("catalog"))
             {
                 foreach (player questionPlayer in players)
@@ -568,13 +655,33 @@ namespace bazillionaire
                                     }
                                 }
                             }
-                                await e.Message.RespondAsync($"{getPlanetCatalog.planetName}'s catalog is as follows:");
-                                string planetOptionsString = "\n /=====================================\\";
-                                planetOptionsString += getPlanetCatalog.ToString(questionPlayer.upgrades, questionPlayer.currLocation);
-                                await e.Message.RespondAsync(planetOptionsString + "\n\\=====================================/");
-                                return;
+                            await questionPlayer.ReadCatalog(getPlanetCatalog);
+                            return;
                         }
                     }
+                }
+            }
+        }
+        public async Task MakeChoice(MessageCreateEventArgs e)
+        {
+            if (!e.Message.Channel.IsPrivate)
+                if (e.Message.Channel.Name.ToLower() != "bazillionaire")
+                    return;
+            foreach (player choiceMakingPlayer in players)
+            {
+                if(choiceMakingPlayer.thePlayer.Username == e.Message.Author.Username) //This is the player trying to make a choice
+                {
+                    Console.WriteLine("Making choice");
+                    if (e.Message.Content == "1")
+                        choiceMakingPlayer.playerStory.setChoice(1, choiceMakingPlayer);
+                    else if (e.Message.Content == "2")
+                        choiceMakingPlayer.playerStory.setChoice(2, choiceMakingPlayer);
+                    else if (e.Message.Content == "3")
+                        choiceMakingPlayer.playerStory.setChoice(3, choiceMakingPlayer);
+                    else if (e.Message.Content == "4")
+                        choiceMakingPlayer.playerStory.setChoice(4, choiceMakingPlayer);
+                    else if (e.Message.Content == "5")
+                        choiceMakingPlayer.playerStory.setChoice(5, choiceMakingPlayer);
                 }
             }
         }
@@ -660,11 +767,14 @@ namespace bazillionaire
             planets.Add(new planet("Aquarion", 8));
         }
     };
-    class player
+
+
+    public class player
     {
         //=====================================User Information
-        public player(DiscordUser thePlayer, planet startLocation, DiscordChannel responseChannel)
+        public player(DiscordUser thePlayer, planet startLocation, DiscordChannel responseChannel, string username)
         {
+            this.username = username;
             this.thePlayer = thePlayer;
             this.responseChannel = responseChannel;
             shmeckles = 5000;
@@ -676,11 +786,11 @@ namespace bazillionaire
             playerItems.Add(new playerItem("Food"));
             playerItems.Add(new playerItem("Spice"));
             playerItems.Add(new playerItem("Water"));
-            playerItems.Add(new playerItem("Circuits"));
-            playerItems.Add(new playerItem("Rocks"));
-            playerItems.Add(new playerItem("Oil"));
-            playerItems.Add(new playerItem("Anime Figurines"));
-            playerItems.Add(new playerItem("Space Aoemebas"));
+            playerItems.Add(new playerItem("Electronics"));
+            playerItems.Add(new playerItem("Ore"));
+            playerItems.Add(new playerItem("Fuel"));
+            playerItems.Add(new playerItem("Goods"));
+            playerItems.Add(new playerItem("Aoemebae"));
 
             currLocation = startLocation;
             destination = startLocation;
@@ -689,20 +799,23 @@ namespace bazillionaire
             yLoc = startLocation.yLoc;
             storageTotal = storage;
 
-            upgrades = new List<itemUpgrade>();
+            modifiers = new List<itemModifier>();
+
+            playerStory = new storyEventHandler(responseChannel, this);
         }
         public DiscordUser thePlayer { get; set; }
         public List<playerItem> playerItems;
         public int shmeckles { get; set; }
         public int storageTotal { get; set; } //Maximum possible stroage
         public int storage { get; set; } //Currently used storage. Is never > storageTotal
-        DiscordChannel responseChannel;
-        // ====================================Commerce methods
-        public async Task Buy(MessageCreateEventArgs e)
+        string username;
+        public DiscordChannel responseChannel;
+        // ====================================Commerce stuff
+        public async Task Buy()
         {
             if (travelTimeLeft > 0)
             {
-                await e.Message.RespondAsync($"You're in space fool, you cant buy anything");
+                await responseChannel.SendMessageAsync($"You're in space fool, you cant buy anything");
                 return;
             }
             //Make sure we're not going over storage limits
@@ -711,86 +824,133 @@ namespace bazillionaire
                 totalStorageUsed += playerItem.quantityLeft;
             if (totalStorageUsed + nextSaleQuantity > storage)
             {
-                await e.Message.RespondAsync($"Not enough storage space left cant buy that much!");
+                await responseChannel.SendMessageAsync($"Not enough storage space left cant buy that much!");
                 return;
             }
-
-            foreach (planetItem planetItem in currLocation.items)
-            {
-                if (nextSaleItem.ToLower() == planetItem.itemName.ToLower())
+            itemModifier saleModifier = new itemModifier(currLocation, nextSaleItem); //Defualt version just incase nothing is found
+            bool foundItem = false;
+            foreach (itemModifier modifierForItem in modifiers)
+                if (modifierForItem.visionItem == nextSaleItem)
                 {
-                    if (nextSaleQuantity > planetItem.quantityLeft)
-                        await e.Message.RespondAsync($"You cant buy what the planet doesnt have enough of ):<");
-                    else if (nextSaleQuantity * planetItem.pricePerUnit > shmeckles)
-                        await e.Message.RespondAsync($"Sorry {e.Message.Author.Username}, I cant give credit. Come back when you're a little MMMMMMMMMMMMMMMMMMM richer!");
-                    else // Nothing stopping us from making this purchase
+                    foundItem = true;
+                    saleModifier = modifierForItem;
+                }
+            if (!foundItem)
+                throw new System.ArgumentException(); // Didnt find the modifier object for this sale );
+
+
+
+            if (nextSaleQuantity > ((nextSaleItem.quantityLeft * saleModifier.skewPercentageAvailable) + saleModifier.skewAvailable))
+                await responseChannel.SendMessageAsync($"You cant buy what the planet doesnt have enough of ):<");
+            else if (nextSaleQuantity * (((nextSaleItem.pricePerUnit * saleModifier.skewPercentagePrice) + saleModifier.skewPrice)) > shmeckles)
+                await responseChannel.SendMessageAsync($"Sorry {username}, I cant give credit. Come back when you're a little MMMMMMMMMMMMMMMMMMM richer!");
+            else // Nothing stopping us from making this purchase
+            {
+
+                foreach (playerItem playerItem in playerItems)
+                {
+                    if (playerItem.itemName.ToLower() == nextSaleItem.itemName.ToLower()) //This is the item we're trying to manipulate. Make the sale
                     {
+                        playerItem.quantityLeft += nextSaleQuantity;
+                        shmeckles -= (int)Math.Round(nextSaleQuantity * (((nextSaleItem.pricePerUnit * saleModifier.skewPercentagePrice) + saleModifier.skewPrice)));
 
-                        foreach (playerItem playerItem in playerItems)
-                        {
-                            if (playerItem.itemName.ToLower() == nextSaleItem.ToLower()) //This is the item we're trying to manipulate
-                            {
-                                playerItem.quantityLeft += nextSaleQuantity;
-                                shmeckles -= (int)Math.Round(nextSaleQuantity * planetItem.pricePerUnit);
+                        storage -= nextSaleQuantity;
 
-                                storage -= nextSaleQuantity;
-
-                                planetItem.quantityLeft -= nextSaleQuantity;
-                                await e.Message.RespondAsync($"Sucessfully bought {nextSaleQuantity} {nextSaleItem}s for {(int)Math.Round(nextSaleQuantity * planetItem.pricePerUnit)} shmeckles.\n You now have {shmeckles} shmeckles!");
-                            }
-                        }
+                        nextSaleItem.quantityLeft -= nextSaleQuantity;
+                        await responseChannel.SendMessageAsync($"Sucessfully bought {nextSaleQuantity} {nextSaleItem}s for {(int)Math.Round(nextSaleQuantity * nextSaleItem.pricePerUnit)} shmeckles.\n You now have {shmeckles} shmeckles!");
+                        return;
                     }
                 }
             }
+            Console.WriteLine("Defualt Return");
             return;
         }
-        public async Task Sell(MessageCreateEventArgs e)
+        public async Task Sell()
         {
             if (travelTimeLeft > 0)
             {
-                await e.Message.RespondAsync($"Your in space fool, you cant sell anything");
+                await responseChannel.SendMessageAsync($"Your in space fool, you cant sell anything");
                 return;
             }
-            foreach (planetItem planetItem in currLocation.items)
+            foreach (playerItem playerItem in playerItems)
             {
-                if (planetItem.itemName.ToLower() == nextSaleItem.ToLower()) //This is the item we want to manipulate
+                if (playerItem.itemName.ToLower() == nextSaleItem.itemName.ToLower()) //This is the item we're trying to manipulate
                 {
-                    foreach (playerItem playerItem in playerItems)
+                    if (playerItem.quantityLeft < nextSaleQuantity)
                     {
-                        if (playerItem.itemName.ToLower() == nextSaleItem.ToLower()) //This is the item we're trying to manipulate
-                        {
-                            if (playerItem.quantityLeft < nextSaleQuantity)
+                        await responseChannel.SendMessageAsync($"You cant sell what you dont have :|");
+                    }
+                    else
+                    {
+                        itemModifier saleModifier = new itemModifier(currLocation, nextSaleItem); //Defualt version just incase nothing is found
+                        bool foundItem = false;
+                        foreach (itemModifier modifierForItem in modifiers)
+                            if (modifierForItem.visionItem == nextSaleItem)
                             {
-                                await e.Message.RespondAsync($"You cant sell what you dont have :|");
+                                foundItem = true;
+                                saleModifier = modifierForItem;
                             }
-                            else
-                            {
-                                playerItem.quantityLeft -= nextSaleQuantity;
-                                shmeckles += (int)Math.Round(nextSaleQuantity * planetItem.pricePerUnit);
+                        if (!foundItem)
+                            throw new System.ArgumentException(); // Didnt find the modifier object for this sale );
 
-                                storage += nextSaleQuantity;
+                        playerItem.quantityLeft -= nextSaleQuantity;
+                        shmeckles += (int)Math.Round(nextSaleQuantity * ((nextSaleItem.pricePerUnit * saleModifier.skewPercentagePrice) + saleModifier.skewPrice));
 
-                                planetItem.quantityLeft += nextSaleQuantity;
-                                await e.Message.RespondAsync($"Sucessfully sold {nextSaleQuantity} {nextSaleItem}s for {(int)Math.Round(nextSaleQuantity * planetItem.pricePerUnit)} shmeckles.\n You now have {shmeckles} shmeckles!");
-                            }
-                        }
+                        storage += nextSaleQuantity;
+
+                        nextSaleItem.quantityLeft += nextSaleQuantity;
+                        await responseChannel.SendMessageAsync($"Sucessfully sold {nextSaleQuantity} {nextSaleItem}s for {(int)Math.Round(nextSaleQuantity * nextSaleItem.pricePerUnit)} shmeckles.\n You now have {shmeckles} shmeckles!");
                     }
                 }
             }
             return;
         }
+        public async Task ReadCatalog(planet catalogPlanet)
+        {
+            string responseString = "";
+            responseString += "========================================";
+            foreach(itemModifier itemToCatalog in modifiers)
+            {
+                if(itemToCatalog.visionPlanet == catalogPlanet) //This is one of the items we want to display
+                {
+                    if(itemToCatalog.upgradeLevel > 0 && catalogPlanet == currLocation) //If there are any upgrade modifiers and were on the planet we get all the info
+                        responseString += $"\n_{(itemToCatalog.visionItem.quantityLeft * itemToCatalog.skewPercentageAvailable) + itemToCatalog.skewAvailable}_ units of **{itemToCatalog.visionItem.itemName}** at a price of *{((itemToCatalog.visionItem.pricePerUnit * itemToCatalog.skewPercentagePrice) + itemToCatalog.skewPrice).ToString("N2")} shmeckles* | Production Level: {itemToCatalog.visionItem.productionRate} (Adv. Upgrade)";
+                    else if (itemToCatalog.upgradeLevel > 0) // Otherwise we only get some of the info depending on the level
+                    {
+                        if (itemToCatalog.upgradeLevel == 1)
+                            responseString += $"\n_{(itemToCatalog.visionItem.quantityLeft * itemToCatalog.skewPercentageAvailable) + itemToCatalog.skewAvailable}_ units of **{itemToCatalog.visionItem.itemName}** at a price of * ??? shmeckles | Not enough vision. Buy more upgrades!*";
+                        else if (itemToCatalog.upgradeLevel == 2)
+                            responseString += $"\n_{(itemToCatalog.visionItem.quantityLeft * itemToCatalog.skewPercentageAvailable) + itemToCatalog.skewAvailable}_ units of **{itemToCatalog.visionItem.itemName}** at a price of *{((itemToCatalog.visionItem.pricePerUnit * itemToCatalog.skewPercentagePrice) + itemToCatalog.skewPrice).ToString("N2")} shmeckles*";
+                        else
+                            responseString += $"\n_{(itemToCatalog.visionItem.quantityLeft * itemToCatalog.skewPercentageAvailable) + itemToCatalog.skewAvailable}_ units of **{itemToCatalog.visionItem.itemName}** at a price of *{((itemToCatalog.visionItem.pricePerUnit * itemToCatalog.skewPercentagePrice) + itemToCatalog.skewPrice).ToString("N2")} shmeckles* | Production Level: {itemToCatalog.visionItem.productionRate} (Adv. Upgrade)";
+                    }
+                    else // If there arent any upgrades at all then we only show basic information depending on the context
+                    {
+                        if (currLocation != catalogPlanet) //We know absolutely nothing about this item.
+                            responseString += $"\n_??? units of **{itemToCatalog.visionItem.itemName}** at a price of *??? shmeckles* | No vision. Buy upgrades at Shin-Akihabara!";
+                        else
+                        {
+                            responseString += $"\n_{(itemToCatalog.visionItem.quantityLeft * itemToCatalog.skewPercentageAvailable) + itemToCatalog.skewAvailable}_ units of **{itemToCatalog.visionItem.itemName}** at a price of *{itemToCatalog.visionItem.itemName}** at a price of *{((itemToCatalog.visionItem.pricePerUnit * itemToCatalog.skewPercentagePrice) + itemToCatalog.skewPrice).ToString("N2")} shmeckles*"; //We can display atleast basic info about this item because we're on the planet
+                        }
+                    }
 
-        public string nextSaleItem { get; set; }
+                }
+            }
+            responseString += "========================================";
+            await responseChannel.SendMessageAsync(responseString);
+        }
+
+        public planetItem nextSaleItem { get; set; }
         public int nextSaleQuantity { get; set; }
         public bool buying { get; set; } //Only true when the player is considering a purchase
         public bool selling { get; set; } //Only true when the player is considering a sale
 
-        // ====================================Travel methods
+        // ====================================Travel stuff
         public planet currLocation { get; set; }
         public planet destination { get; set; }
         public double travelTimeLeft { get; set; } //In seconds
         public int shipSpeed { get; set; } //Parsecs per hour
-        public void travelTick(double secondsPerTick)
+        public async void travelTick(double secondsPerTick)
         {
             if (travelTimeLeft > secondsPerTick + 5)
             {
@@ -824,7 +984,10 @@ namespace bazillionaire
                 xLoc = currLocation.xLoc;
                 yLoc = currLocation.yLoc;
                 if (travelTimeLeft != -10)
+                {
                     responseChannel.SendMessageAsync($"Welcome to {currLocation.planetName} {thePlayer.Mention} \n" + currLocation.getRandomFlavorText());
+                    await playerStory.triggerArrive();
+                }
                 travelTimeLeft = -10;
             }
         }
@@ -851,10 +1014,13 @@ namespace bazillionaire
         }
         public double xLoc { get; set; }
         public double yLoc { get; set; }
+        // ==============================Story Stuff
+        public storyEventHandler playerStory;
         // ==============================Misc
-        public List<itemUpgrade> upgrades;
+        public List<itemModifier> modifiers; // upgrades for specific items on specific planets. if the item is not in the list its assuemd to be unupgraded
+        bool eventLock; //Cant do anything while eventLock is in place
     };
-    class playerItem
+    public class playerItem
     {
         public playerItem(string itemName)
         {
@@ -864,17 +1030,31 @@ namespace bazillionaire
         public string itemName { get; private set; }
         public int quantityLeft { get; set; }
     }
-    public class itemUpgrade //Constant vision on a single item for the player. These are bought
+    public class itemModifier //Constant vision on a single item for the player. These are bought
     {
-        public itemUpgrade(planet visionPlanet, planetItem visionItem)
+        public itemModifier(planet visionPlanet, planetItem visionItem)
         {
             this.visionItem = visionItem;
             this.visionPlanet = visionPlanet;
+
+            skewAvailable = 0;
+            skewPrice = 0;
+
+            skewPercentageAvailable = 1;
+            skewPercentagePrice = 1;
             upgradeLevel = 0;
         }
         public planet visionPlanet;
         public planetItem visionItem;
-        public int upgradeLevel;
+
+
+        public double skewPercentageAvailable; //Reduces/Increases the amnount available to the player by this percentage. This takes effect 1st
+        public double skewAvailable; //Reduces the amount available to the player by this amount. This takes effect 2nd
+
+        public double skewPercentagePrice; //Reduces/Increases the price of the item by this percentage. Takes effect 1st.
+        public double skewPrice; //Reduces/increases the price of the item by a flat amount. The takes effect 2nd
+
+        public int upgradeLevel; //How upgraded the players vision of this item is.
     }
     public class planet
     {
@@ -886,7 +1066,7 @@ namespace bazillionaire
                 this.planetName = planetName;
                 orbitalPeriod = 0;
                 orbitalSkew = 0;
-                orbitalSpeed = 3.14159265358 / 1800;
+                orbitalSpeed = 3.14159265358 / (14400);
                 xLoc = orbitalRadius * Math.Cos((orbitalPeriod + orbitalSkew) * orbitalSpeed);
                 yLoc = orbitalRadius * Math.Sin((orbitalPeriod + orbitalSkew) * orbitalSpeed);
                 items = new List<planetItem>();
@@ -911,7 +1091,7 @@ namespace bazillionaire
                 this.planetName = planetName;
                 orbitalPeriod = 0;
                 orbitalSkew = 0;
-                orbitalSpeed = 3.14159265358 / (1800 * 2);
+                orbitalSpeed = 3.14159265358 / (14400 * 2);
                 xLoc = orbitalRadius * Math.Cos((orbitalPeriod + orbitalSkew) * orbitalSpeed);
                 yLoc = orbitalRadius * Math.Sin((orbitalPeriod + orbitalSkew) * orbitalSpeed);
                 items = new List<planetItem>();
@@ -936,7 +1116,7 @@ namespace bazillionaire
                 this.planetName = planetName;
                 orbitalPeriod = 0;
                 orbitalSkew = 0;
-                orbitalSpeed = 3.14159265358 / (1800 * 3);
+                orbitalSpeed = 3.14159265358 / (14400 * 3);
                 xLoc = orbitalRadius * Math.Cos((orbitalPeriod + orbitalSkew) * orbitalSpeed);
                 yLoc = orbitalRadius * Math.Sin((orbitalPeriod + orbitalSkew) * orbitalSpeed);
                 items = new List<planetItem>();
@@ -960,7 +1140,7 @@ namespace bazillionaire
                 this.planetName = planetName;
                 orbitalPeriod = 0;
                 orbitalSkew = 0;
-                orbitalSpeed = 3.14159265358 / (1800 * 6);
+                orbitalSpeed = 3.14159265358 / (14400 * 6);
                 xLoc = orbitalRadius * Math.Cos((orbitalPeriod + orbitalSkew) * orbitalSpeed);
                 yLoc = orbitalRadius * Math.Sin((orbitalPeriod + orbitalSkew) * orbitalSpeed);
                 items = new List<planetItem>();
@@ -985,7 +1165,7 @@ namespace bazillionaire
                 this.planetName = planetName;
                 orbitalPeriod = 0;
                 orbitalSkew = 0;
-                orbitalSpeed = 3.14159265358 / (1800 * 5);
+                orbitalSpeed = 3.14159265358 / (14400 * 5);
                 xLoc = orbitalRadius * Math.Cos((orbitalPeriod + orbitalSkew) * orbitalSpeed);
                 yLoc = orbitalRadius * Math.Sin((orbitalPeriod + orbitalSkew) * orbitalSpeed);
                 items = new List<planetItem>();
@@ -1010,7 +1190,7 @@ namespace bazillionaire
                 this.planetName = planetName;
                 orbitalPeriod = 0;
                 orbitalSkew = 0;
-                orbitalSpeed = 3.14159265358 / (1800 * 6);
+                orbitalSpeed = 3.14159265358 / (14400 * 6);
                 xLoc = orbitalRadius * Math.Cos((orbitalPeriod + orbitalSkew) * orbitalSpeed);
                 yLoc = orbitalRadius * Math.Sin((orbitalPeriod + orbitalSkew) * orbitalSpeed);
                 items = new List<planetItem>();
@@ -1035,7 +1215,7 @@ namespace bazillionaire
                 this.planetName = planetName;
                 orbitalPeriod = 0;
                 orbitalSkew = 0;
-                orbitalSpeed = 3.14159265358 / (1800 * 7);
+                orbitalSpeed = 3.14159265358 / (14400 * 7);
                 xLoc = orbitalRadius * Math.Cos((orbitalPeriod + orbitalSkew) * orbitalSpeed);
                 yLoc = orbitalRadius * Math.Sin((orbitalPeriod + orbitalSkew) * orbitalSpeed);
                 items = new List<planetItem>();
@@ -1060,7 +1240,7 @@ namespace bazillionaire
                 this.planetName = planetName;
                 orbitalPeriod = 0;
                 orbitalSkew = 0;
-                orbitalSpeed = 3.14159265358 / (1800 * 8);
+                orbitalSpeed = 3.14159265358 / (14400 * 8);
                 xLoc = orbitalRadius * Math.Cos((orbitalPeriod + orbitalSkew) * orbitalSpeed);
                 yLoc = orbitalRadius * Math.Sin((orbitalPeriod + orbitalSkew) * orbitalSpeed);
                 items = new List<planetItem>();
@@ -1109,7 +1289,7 @@ namespace bazillionaire
             if (distanceBetweenLocations < .01)
                 distanceBetweenLocations = 0;
 
-            Console.WriteLine($"The distance between {planetName} and ({currXLocation}, {currYLocation}) is {distanceBetweenLocations}");
+            Console.WriteLine($"The distance between {planetName} @ ({xLoc}, {yLoc}) and the ship position of ({currXLocation}, {currYLocation}) is {distanceBetweenLocations}");
 
             return distanceBetweenLocations;
         }
@@ -1122,25 +1302,25 @@ namespace bazillionaire
             }
             return retString;
         }
-        public string ToString(List<itemUpgrade> upgrades, planet currLocation)
+        public string ToString(List<itemModifier> modifiers, planet currLocation)
         {
             string retString = "";
             bool displayFlag = false;
             foreach (planetItem item in items)
             {
                 displayFlag = false;
-                foreach(itemUpgrade itemUpgrade in upgrades)
+                foreach(itemModifier itemModifier in modifiers)
                 {
-                    if(itemUpgrade.visionPlanet == this && item == itemUpgrade.visionItem) // This player has an upgraded vision for this planet
+                    if(itemModifier.visionPlanet == this && item == itemModifier.visionItem) // This is the players modified vision item for this planet
                     {
                         displayFlag = true;
-                        if (currLocation == this)
+                        if (currLocation == this && itemModifier.upgradeLevel > 0)
                             retString += $"\n_{item.quantityLeft}_ units of **{item.itemName}** at a price of *{(item.pricePerUnit).ToString("N2")} shmeckles* | Production Level: {item.productionRate} (Adv. Upgrade)";
                         else
                         {
-                            if (itemUpgrade.upgradeLevel == 0)
+                            if (itemModifier.upgradeLevel == 1)
                                 retString += $"\n_{item.quantityLeft}_ units of **{item.itemName}** at a price of * ??? shmeckles | Not enough vision. Buy more upgrades!*";
-                            else if (itemUpgrade.upgradeLevel == 1)
+                            else if (itemModifier.upgradeLevel == 2)
                                 retString += $"\n_{item.quantityLeft}_ units of **{item.itemName}** at a price of *{(item.pricePerUnit).ToString("N2")} shmeckles*";
                             else
                                 retString += $"\n_{item.quantityLeft}_ units of **{item.itemName}** at a price of *{(item.pricePerUnit).ToString("N2")} shmeckles* | Production Level: {item.productionRate} (Adv. Upgrade)";
@@ -1214,7 +1394,7 @@ namespace bazillionaire
                         return "A hunk of metallic ores and sturdy material close to the star Orion, Medusa produces much of the raw components needed to build structures across the system.  While heavy, these materials are always in demand and are particularly valuable on worlds that have the capability to refine them.";
                 }
             }
-            if (planetName == "Rockefellers Reach")
+            if (planetName == "Rockefeller Reach")
             {
                 switch (randomNum)
                 {
@@ -1312,7 +1492,6 @@ namespace bazillionaire
             double targetPrice = 0;
 
             targetPrice = (-(Math.Log(quantityLeft/quantityExpected)))/(.02) + quantityExpected/2;
-            Console.WriteLine($"Target Price is: {targetPrice}");
             if (targetPrice < (double)(basePrice - basePrice * .25))
                 targetPrice = basePrice - basePrice * .25;
             if (targetPrice > (double)(basePrice + basePrice * .35))
@@ -1461,5 +1640,239 @@ namespace bazillionaire
             xLoc = orbitingBody.xLoc + (.15 * Math.Cos((orbitalPeriod + orbitalSkew) * orbitalSpeed));
             yLoc = orbitingBody.yLoc + (.15 * Math.Sin((orbitalPeriod + orbitalSkew) * orbitalSpeed));
         }
+    }
+
+
+    public class storyEventHandler //Collects all story events for a player and decides what to do with them
+    {
+
+        public storyEventHandler(DiscordChannel responseChannel, player storyPlayer)
+        {
+            dispute = new civilizedDispute(responseChannel);
+
+
+            buyEvent += dispute.storyBuy;
+            sellEvent += dispute.storySell;
+            arriveEvent += dispute.storyArrive;
+
+
+            this.storyPlayer = storyPlayer;
+        }
+        public bool checkEventLock()
+        {
+            if (dispute.eventLock)
+            {
+                dispute.eventLock = false;
+                return true;
+            }
+
+            return false;
+        }
+        public bool checkChoiceLock()
+        {
+            if (dispute.choiceLock)
+                return true;
+            return false;
+        }
+        public void setChoice(int choice, player owningPlayer)
+        {
+            if(dispute.choiceLock)
+                dispute.setChoice(choice, owningPlayer);
+        }
+
+
+
+        public Task triggerBuy()
+        {
+            buyEvent(storyPlayer.nextSaleQuantity, storyPlayer.nextSaleItem, storyPlayer);
+            return Task.CompletedTask;
+        }
+        public Task triggerSell()
+        {
+            sellEvent(storyPlayer.nextSaleQuantity, storyPlayer.nextSaleItem, storyPlayer);
+            return Task.CompletedTask;
+        }
+        public Task triggerArrive()
+        {
+            arriveEvent(storyPlayer.currLocation, storyPlayer);
+            return Task.CompletedTask;
+        }
+        public delegate void storyBuy(int quantityToBuy, planetItem itemToBuy, player playerThatTriggered); // Story Logic for whenever something is sold
+        public delegate void storySell(int quantityToSell, planetItem itemToSell, player playerThatTriggered); // Story logic for whenever something is sold
+        public delegate void storyArrive(planet arrivalLocation, player playerThatTriggered); //Story logic for when you arrive at a location
+        public delegate void storyLeave(planet leainvgPlanet, player playerThatTriggered); // Logic for whenever you leave a planet
+        public delegate void storyTravel(planet destination, planet previousLocation, player playerThatTriggered); //Loigc that triggers whenever you're moving in space
+        public delegate void storyCatalog(planet checkedPlanet, player playerThatTriggered); //Logic that triggers when you check the catalog of the current planet.
+        public delegate void storyUpgrade(int upgradeType, player playerThatTriggered); //logic that triggers whenever you upgrade your ship. 1 = engines. 2 = storage space. 3 = item vision. More it come?
+        public delegate void storyMoney(int shmeckles, player playerThatTriggered); // Logic that triggers whenever your money reaches a certain value
+        public delegate void storyStorage(List<playerItem> playerItems, int storageLeft, player playerThatTriggered); // Logic that triggers depending on what you have in storage
+        public delegate void storyWait(planet currLocation, player playerThatTriggered); //Logic that tirggers if you wait in a certain location
+        public delegate void storyProfit(int profit, player playerThatTriggered); // Logic that triggers depending on the profit you made from a sale. (Can be negative)
+
+
+
+        public event storyBuy buyEvent;
+        public event storySell sellEvent;
+        public event storyArrive arriveEvent;
+
+        civilizedDispute dispute;
+
+        player storyPlayer;
+    }
+    public abstract class storyEventInterface // A single event. Logic changes per story
+    {
+        public storyEventInterface(DiscordChannel responseChannel)
+        {
+            completed = false;
+            started = false;
+            choiceLock = false;
+            this.responseChannel = responseChannel;
+        }
+        public void setChoice(int num, player owningPlayer)
+        {
+            choice = num;
+            doLogic(owningPlayer);
+        }
+
+        public abstract void doLogic(player playerThatTriggered); //Logic that is always called on tick AND whenver a choice is made
+        public abstract void storyBuy(int quantityToBuy, planetItem itemToBuy, player playerThatTriggered); // Story Logic for whenever something is sold
+        public abstract void storySell(int quantityToSell, planetItem itemToSell, player playerThatTriggered); // Story logic for whenever something is sold
+        public abstract void storyArrive(planet arrivalLocation, player playerThatTriggered); //Story logic for when you arrive at a location
+        public abstract void storyLeave(planet leainvgPlanet, player playerThatTriggered); // Logic for whenever you leave a planet
+        public abstract void storyTravel(planet destination, planet previousLocation, player playerThatTriggered); //Loigc that triggers whenever you're moving in space
+        public abstract void storyCatalog(planet checkedPlanet, player playerThatTriggered); //Logic that triggers when you check the catalog of the current planet.
+        public abstract void storyUpgrade(int upgradeType, player playerThatTriggered); //logic that triggers whenever you upgrade your ship. 1 = engines. 2 = storage space. 3 = item vision. More it come?
+        public abstract void storyMoney(int shmeckles, player playerThatTriggered); // Logic that triggers whenever your money reaches a certain value
+        public abstract void storyStorage(List<playerItem> playerItems, int storageLeft, player playerThatTriggered); // Logic that triggers depending on what you have in storage
+        public abstract void storyWait(planet currLocation, player playerThatTriggered); //Logic that tirggers if you wait in a certain location
+        public abstract void storyProfit(int profit, player playerThatTriggered); // Logic that triggers depending on the profit you made from a sale. (Can be negative)
+
+
+        protected int choice = 0;
+        protected bool completed;
+        protected bool started;
+        public bool choiceLock; //This event is taking over for all ticks until they make a choice. Make sure the player cant do anything until then
+        public bool eventLock; //this event is taking over for the tick. Make sure the player cant do anything else
+        protected DiscordChannel responseChannel;
+    }
+    public class civilizedDispute : storyEventInterface
+    {
+        public civilizedDispute(DiscordChannel responseChannel) : base(responseChannel) { }
+        public override void doLogic(player playerThatTriggered)
+        {
+            if (!completed && started)
+            {
+                if (choice == 1)
+                {
+                    responseChannel.SendMessageAsync("*The man claiming his cargo was stolen is more than happy to purchase it back from you, although he seems less pleased about paying the extra twenty percent.  No matter- profit is profit.*");
+                    playerThatTriggered.shmeckles += (int)(itemAboutToBuy.pricePerUnit * quantityAboutToBuy * .2);
+                    choice = 0;
+                    choiceLock = false;
+                    goingToMedusa = false;
+                    completed = true;
+                    return;
+                }
+                else if (choice == 2)
+                {
+                    responseChannel.SendMessageAsync("* You agree to keep the cargo and deliver it to Medusa for the bonus the original seller has promised.  You’re not sure what that bonus will actually be, but perhaps it’ll pan out well.*");
+                    goingToMedusa = true;
+                    choiceLock = false;
+                    playerThatTriggered.Buy();
+                    eventLock = true;
+                }
+                else if (choice == 3)
+                {
+                    choiceLock = false;
+                    goingToMedusa = false;
+                    completed = true;
+
+                    eventLock = true;
+                    responseChannel.SendMessageAsync("*You don’t have time for this.The documents have been signed and you are the legal owner of this food.You instruct your security personnel to escort these troublesome people off of your ship.*");
+                    playerThatTriggered.Buy();
+                    return;
+                }
+                else
+                {
+                    responseChannel.SendMessageAsync($"'{choice}' is not a valid option, try again.");
+                }
+            }
+        }
+        public override void storyBuy(int quantityToBuy, planetItem itemToBuy, player playerThatTriggered)
+        {
+            if(!completed && !started && playerThatTriggered.currLocation.planetName.ToLower() == "demeter")
+            {
+                Random random = new Random();
+                if(random.Next(1, 2) == 1)
+                {
+                    responseChannel.SendMessageAsync("* As you sign the various contracts and agreements for the food you’ve just purchased, a secretary informs you of an argument just outside your vessel’s cargo hold.  Apparently one of your quartermasters has been accosted by an enraged Demetrian salesman.  There’s been a disagreement over the legal ownership of your new cargo.  Curious, you leave your office to check on things…*\n\n" +
+
+                    "*Your security forces have separated the quarreling businessmen, although they return to their vicious bickering at the sight of you.  You inform them that you’ll hear what they have to say about this situation.The first of them, a man whose face you do not recognize, claims that your new cargo was illicitly sold from his own warehouse without prior authorization to settle a supposedly invalid futures contract.The second man, who was the original seller, naturally denies this and claims he owned it all along.*\n\n" +
+
+                    "*The man who claims he was cheated immediately offers to buy the cargo back for its original value, plus a twenty percent premium on the lot for your trouble.  The original seller gives a counter - offer: keep the cargo, and if you fulfill an outstanding subsidy to transfer it to Medusa, he’ll pay you a handsome sum upon delivery.*\n\n" +
+
+                    "*You could side with one of them and attempt to fulfill their request, if you’d like.*\n\n(Make a choice)\n 1) Resell the cargo immediately\n2) Promise to deliver the cargo to Medusa\n3)Keep the cargo and make no promises");
+
+                    started = true;
+                    itemAboutToBuy = itemToBuy;
+                    quantityAboutToBuy = quantityToBuy;
+                    eventLock = true;
+                    choiceLock = true;
+                    responseChannel.SendMessageAsync("100% setting the story lock flag here :|");
+                    return;
+                }
+                else
+                {
+                    Console.WriteLine("Bad Roll");
+                }
+            }
+        }
+        public override void storySell(int quantityToSell, planetItem itemToSell, player playerThatTriggered)
+        {
+            if(itemToSell.itemName.ToLower() == "food" && goingToMedusa && !completed)
+            {
+                if(playerThatTriggered.currLocation.planetName.ToLower() != "medusa")
+                {
+                    completed = true;
+                    return;
+                }
+                else
+                {
+                    Random random = new Random();
+                    eventLock = true;
+                    playerThatTriggered.Sell();
+                    eventLock = true;
+                    double randomNumber = (random.Next(-1, 4) / 10);
+                    playerThatTriggered.shmeckles += (int)(itemToSell.pricePerUnit * quantityToSell * (.2 + randomNumber));
+                    responseChannel.SendMessageAsync($"Due to your outstanding contract to deliver this food to medusa you've made an additional {(int)(itemToSell.pricePerUnit * quantityToSell * (.2 + randomNumber))} in profit");
+                    completed = true;
+                    return;
+                }
+            }
+        }
+        public override void storyArrive(planet arrivalLocation, player playerThatTriggered)
+        {
+            if(arrivalLocation.planetName.ToLower() == "medusa" && started && !completed && goingToMedusa)
+                responseChannel.SendMessageAsync("You've arrived at Medusa with the food you recieved from Demeter. Its unclear how much the subsidy will pay out but it will certainly be higher that the current market price.");
+        }
+
+
+
+        planetItem itemAboutToBuy;
+        int quantityAboutToBuy;
+
+        int quantityPaidForEachUnit;
+        bool goingToMedusa;
+
+
+
+
+        public override void storyLeave(planet leainvgPlanet, player playerThatTriggered) { return; }
+        public override void storyTravel(planet destination, planet previousLocation, player playerThatTriggered) { return; }
+        public override void storyCatalog(planet checkedPlanet, player playerThatTriggered) { return; }
+        public override void storyUpgrade(int upgradeType, player playerThatTriggered) { return; }
+        public override void storyMoney(int shmeckles, player playerThatTriggered) { return; }
+        public override void storyStorage(List<playerItem> playerItems, int storageLeft, player playerThatTriggered) { return; }
+        public override void storyWait(planet currLocation, player playerThatTriggered) { return; }
+        public override void storyProfit(int profit, player playerThatTriggered) { return; }
     }
 }
