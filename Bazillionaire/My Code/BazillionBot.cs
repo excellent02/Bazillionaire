@@ -1648,12 +1648,24 @@ namespace bazillionaire
 
         public storyEventHandler(DiscordChannel responseChannel, player storyPlayer)
         {
+            //Setup the Civilized Disput event
             dispute = new civilizedDispute(responseChannel);
-
 
             buyEvent += dispute.storyBuy;
             sellEvent += dispute.storySell;
             arriveEvent += dispute.storyArrive;
+
+            //Setup the Rumbling Sands Event
+            sands = new rumblingSands(responseChannel);
+            arriveEvent += sands.storyArrive;
+
+            //Setup the Malfunctioning Spider Event
+            spider = new malfunctioningSpider(responseChannel);
+            arriveEvent += spider.storyArrive;
+
+            //Setup the Price of Disobedience event
+            price = new priceOfDisobedience(responseChannel);
+            arriveEvent += price.storyArrive;
 
 
             this.storyPlayer = storyPlayer;
@@ -1678,6 +1690,8 @@ namespace bazillionaire
         {
             if(dispute.choiceLock)
                 dispute.setChoice(choice, owningPlayer);
+            if (spider.choiceLock)
+                spider.setChoice(choice, owningPlayer);
         }
 
 
@@ -1716,6 +1730,9 @@ namespace bazillionaire
         public event storyArrive arriveEvent;
 
         civilizedDispute dispute;
+        rumblingSands sands;
+        malfunctioningSpider spider;
+        priceOfDisobedience price;
 
         player storyPlayer;
     }
@@ -1802,7 +1819,7 @@ namespace bazillionaire
             if(!completed && !started && playerThatTriggered.currLocation.planetName.ToLower() == "demeter")
             {
                 Random random = new Random();
-                if(random.Next(1, 2) == 1)
+                if(random.Next(1, 3) == 1)
                 {
                     responseChannel.SendMessageAsync("* As you sign the various contracts and agreements for the food you’ve just purchased, a secretary informs you of an argument just outside your vessel’s cargo hold.  Apparently one of your quartermasters has been accosted by an enraged Demetrian salesman.  There’s been a disagreement over the legal ownership of your new cargo.  Curious, you leave your office to check on things…*\n\n" +
 
@@ -1817,7 +1834,6 @@ namespace bazillionaire
                     quantityAboutToBuy = quantityToBuy;
                     eventLock = true;
                     choiceLock = true;
-                    responseChannel.SendMessageAsync("100% setting the story lock flag here :|");
                     return;
                 }
                 else
@@ -1866,6 +1882,190 @@ namespace bazillionaire
 
 
 
+        public override void storyLeave(planet leainvgPlanet, player playerThatTriggered) { return; }
+        public override void storyTravel(planet destination, planet previousLocation, player playerThatTriggered) { return; }
+        public override void storyCatalog(planet checkedPlanet, player playerThatTriggered) { return; }
+        public override void storyUpgrade(int upgradeType, player playerThatTriggered) { return; }
+        public override void storyMoney(int shmeckles, player playerThatTriggered) { return; }
+        public override void storyStorage(List<playerItem> playerItems, int storageLeft, player playerThatTriggered) { return; }
+        public override void storyWait(planet currLocation, player playerThatTriggered) { return; }
+        public override void storyProfit(int profit, player playerThatTriggered) { return; }
+    }
+    public class rumblingSands : storyEventInterface
+    {
+
+        public rumblingSands(DiscordChannel responseChannel) : base(responseChannel) { }
+        public override void storyArrive(planet arrivalLocation, player playerThatTriggered)
+        {
+            if(arrivalLocation.planetName == "Arrakis")
+            {
+                Random random = new Random();
+                if(random.Next(1,7) == 1) // This event can occur over and over again.
+                {
+                    started = true;
+                    responseChannel.SendMessageAsync("*Your vessel touches down at one of Arrakis’ commercial ports just in time for an urgent warning from the local government.  It appears that the gigantic sand-worms beneath the desert planet’s surface have been more agitated than usual, either due to increased mining efforts or their generally mercurial nature.  Even the bravest mining guild doesn’t dare challenge these things in their natural habitat, lest they grow angry and swallow up a city.*\n" +
+                    "*The authorities have put out an advisory temporarily limiting mining operations to more sustainable levels.Unfortunately for you, this means that supplies will be especially limited to commercial traders until they can get things up and running again.*" +
+                    "");
+                    foreach(itemModifier reduceItem in playerThatTriggered.modifiers)
+                    {
+                        if(reduceItem.visionPlanet.planetName == "Arrakis") // Reduce the availability of everything on arrakis by 50%, 75% for spice. For this player
+                        {
+                            reduceItem.skewPercentageAvailable = .5;
+                            if (reduceItem.visionItem.itemName == "Spice")
+                                reduceItem.skewPercentageAvailable = .25;
+                        }
+                    }
+                }
+            }
+            else if (started) //We arrived somewhere else besides arrakis turn off the modifiers
+            {
+                started = false;
+                foreach (itemModifier reduceItem in playerThatTriggered.modifiers)
+                {
+                    if (reduceItem.visionPlanet.planetName == "Arrakis") // Return the availability to normal so when the player returns to arrakkis the event is over.
+                    {
+                        reduceItem.skewPercentageAvailable = 1;
+                    }
+                }
+            }
+        }
+
+
+
+
+        public override void doLogic(player playerThatTriggered) { return; }
+        public override void storyBuy(int quantityToBuy, planetItem itemToBuy, player playerThatTriggered) { return; }
+        public override void storySell(int quantityToSell, planetItem itemToSell, player playerThatTriggered) { return; }
+        public override void storyLeave(planet leainvgPlanet, player playerThatTriggered) { return; }
+        public override void storyTravel(planet destination, planet previousLocation, player playerThatTriggered) { return; }
+        public override void storyCatalog(planet checkedPlanet, player playerThatTriggered) { return; }
+        public override void storyUpgrade(int upgradeType, player playerThatTriggered) { return; }
+        public override void storyMoney(int shmeckles, player playerThatTriggered) { return; }
+        public override void storyStorage(List<playerItem> playerItems, int storageLeft, player playerThatTriggered) { return; }
+        public override void storyWait(planet currLocation, player playerThatTriggered) { return; }
+        public override void storyProfit(int profit, player playerThatTriggered) { return; }
+    }
+
+    public class malfunctioningSpider : storyEventInterface
+    {
+        public malfunctioningSpider(DiscordChannel responseChannel) : base(responseChannel) { }
+        public override void storyArrive(planet arrivalLocation, player playerThatTriggered)
+        {
+
+            if (arrivalLocation.planetName == "Aquarion")
+            {
+                aquarion = arrivalLocation;
+                Random random = new Random();
+                if(random.Next(1,8) == 1)
+                {
+                    responseChannel.SendMessageAsync("*On Aquarion, most of the ice is extracted from the planet’s crust using specialized mobile mining stations- colloquially known as “spiders” due to their multi-legged means of transportation.  These spiders are large and numerous enough to be visible from orbit, and any self-respecting mining firm owns at least a modest fleet of them if they’re looking to make any money.*\n*Unfortunately, both the temperature and the relative lack of an atmosphere tend to wreak havoc on the sensitive machinery of the spiders, and as such it’s common for them to require regular maintenance, or even break down in extreme circumstances.*\n*There’s a message posted across many local communications channels stating that a local mining firm has suffered catastrophic damage to one of their few spiders, to the extent that they’ll need to order a substantial amount of parts from Persepolis to cover the repairs.  They’re requesting assistance from third-party traders to fulfill some of their deliveries at a reduced price.*\n(Make a choice)\n1) **Take on one of these contracts** (Buy random amount of water at 50% market price)\n2) **Let someone else handle this**");
+                    started = true;
+                    choiceLock = true;
+                }
+            }
+        }
+        public override void doLogic(player playerThatTriggered) 
+        { 
+            if(started)
+            {
+                if(choice == 1)
+                {
+                    int maxBuy = 0;
+                    maxBuy = playerThatTriggered.storage;
+                    foreach(planetItem water in aquarion.items)
+                    {
+                        if(water.itemName == "Water") //This is the item we're looking for
+                        {
+                            if((water.pricePerUnit) * maxBuy > playerThatTriggered.shmeckles)
+                            {
+                                maxBuy = (int)(playerThatTriggered.shmeckles / water.pricePerUnit) - 1;
+                            }
+                            playerThatTriggered.nextSaleItem = water;
+                        }
+                    }
+                    Random random = new Random();
+                    int quantityToBuy = random.Next(1, maxBuy);
+                    playerThatTriggered.nextSaleQuantity = random.Next(0, maxBuy);
+                    foreach (itemModifier waterModifier in playerThatTriggered.modifiers)
+                        if (waterModifier.visionPlanet.planetName == "Aquarion" && waterModifier.visionItem.itemName == "Water")
+                        {
+                            responseChannel.SendMessageAsync("*Their aims are certainly altruistic, especially considering they’re willing to sell you bulk water for so little.  Perhaps you’ll help them out.*");
+                            waterModifier.skewPercentagePrice = .5;
+                            playerThatTriggered.Buy();
+                            waterModifier.skewPercentagePrice = 1;
+                            started = false;
+                            return;
+                        }
+
+                    responseChannel.SendMessageAsync("Something not right happened in the Malfunctioning spider event, please tell Joe");
+                }
+                else if (choice == 2)
+                {
+                    responseChannel.SendMessageAsync("*Either you don’t have the funds, you don’t have the space in your cargo bay, or you’re simply not interested in keeping a company like this afloat.  More will replace them.*");
+                    started = false;
+                }
+            }
+            return; 
+        }
+
+        planet aquarion;
+
+
+
+        public override void storyBuy(int quantityToBuy, planetItem itemToBuy, player playerThatTriggered) { return; }
+        public override void storySell(int quantityToSell, planetItem itemToSell, player playerThatTriggered) { return; }
+        public override void storyLeave(planet leainvgPlanet, player playerThatTriggered) { return; }
+        public override void storyTravel(planet destination, planet previousLocation, player playerThatTriggered) { return; }
+        public override void storyCatalog(planet checkedPlanet, player playerThatTriggered) { return; }
+        public override void storyUpgrade(int upgradeType, player playerThatTriggered) { return; }
+        public override void storyMoney(int shmeckles, player playerThatTriggered) { return; }
+        public override void storyStorage(List<playerItem> playerItems, int storageLeft, player playerThatTriggered) { return; }
+        public override void storyWait(planet currLocation, player playerThatTriggered) { return; }
+        public override void storyProfit(int profit, player playerThatTriggered) { return; }
+    }
+    public class priceOfDisobedience : storyEventInterface
+    {
+
+        public priceOfDisobedience(DiscordChannel responseChannel) : base(responseChannel) { }
+        public override void storyArrive(planet arrivalLocation, player playerThatTriggered)
+        {
+            if (arrivalLocation.planetName == "Persepolis")
+            {
+                Random random = new Random();
+                if (random.Next(1, 7) == 1) // This event can occur over and over again.
+                {
+                    started = true;
+                    responseChannel.SendMessageAsync("*Among the colonies of Orion, it’s no secret that the quality of life on Persepolis is the least desirable.  Tight, confined living spaces combined with a large amount of pollution from the planet’s rapid industrialization mean that the majority of the population lives in dangerous squalor.  The people direct most of their enmity at one of the easiest targets in the civilized systems- the Protectorate.*\n\n" +
+                    "*Whether or not the Protectorate really is to blame for the conditions of Persepolis is a topic of widespread public debate.  While it is true that the planet produced a large amount of products for the Protectorate war machine, it’s not unique in that regard.  Many worlds in Protectorate space shared a similar goal during the war.*\n\n" +
+                    "*Regardless, public discontent against the Protectorate has reached a semi-regular high lately, and because of this the provisional government has begun to enforce more stringent security measures in the customs-and-excise process.  For you, this means things are going to get a little more expensive for a while.*");
+                    foreach (itemModifier reduceItem in playerThatTriggered.modifiers)
+                    {
+                        if (reduceItem.visionPlanet.planetName == "Persepolis") // Increase the price of everything for this player
+                        {
+                            reduceItem.skewPercentagePrice = 1.15;
+                        }
+                    }
+                }
+            }
+            else if (started) //We arrived somewhere else besides persepolis turn off the modifiers
+            {
+                started = false;
+                foreach (itemModifier reduceItem in playerThatTriggered.modifiers)
+                {
+                    if (reduceItem.visionPlanet.planetName == "Arrakis") // Return the availability to normal so when the player returns to persepolis the event is over.
+                    {
+                        reduceItem.skewPercentagePrice = 1;
+                    }
+                }
+            }
+        }
+
+
+
+
+        public override void doLogic(player playerThatTriggered) { return; }
+        public override void storyBuy(int quantityToBuy, planetItem itemToBuy, player playerThatTriggered) { return; }
+        public override void storySell(int quantityToSell, planetItem itemToSell, player playerThatTriggered) { return; }
         public override void storyLeave(planet leainvgPlanet, player playerThatTriggered) { return; }
         public override void storyTravel(planet destination, planet previousLocation, player playerThatTriggered) { return; }
         public override void storyCatalog(planet checkedPlanet, player playerThatTriggered) { return; }
