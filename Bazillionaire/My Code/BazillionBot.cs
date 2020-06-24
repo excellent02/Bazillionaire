@@ -248,9 +248,14 @@ namespace bazillionaire
                         {
                             if (pItem.itemName == itemToBuy)
                             {
+                                itemModifier itemToBuyModifier = new itemModifier(player.currLocation, player.currLocation.items[0]); //Just a default set so the compiler will stop complaining, if we always buy food when max is used there is a bug
+                                foreach (itemModifier currItemMod in player.modifiers)
+                                    if (currItemMod.visionItem.itemName == itemToBuy && currItemMod.visionPlanet == player.currLocation)
+                                        itemToBuyModifier = currItemMod;
+
                                 if (e.Message.Content.ToLower().Contains("max"))
                                 {
-                                    quantityToBuy = (int)(player.shmeckles / pItem.pricePerUnit);
+                                    quantityToBuy = (int)(player.shmeckles / ((pItem.pricePerUnit * itemToBuyModifier.skewPercentagePrice) + itemToBuyModifier.skewPrice));
                                     player.nextSaleItem = pItem;
                                     player.nextSaleQuantity = quantityToBuy;
                                     player.buying = true;
@@ -263,6 +268,7 @@ namespace bazillionaire
 
                                     player.nextSaleItem = pItem;
                                     player.nextSaleQuantity = quantityToBuy;
+                                    player.nextSaleModifier = itemToBuyModifier;
                                     player.buying = true;
                                 }
                                 if (pItem.itemName == itemToBuy)
@@ -303,6 +309,11 @@ namespace bazillionaire
                         {
                             if (pItem.itemName == itemToSell)
                             {
+                                itemModifier itemToSellModifier = new itemModifier(player.currLocation, player.currLocation.items[0]); //Just a default set so the compiler will stop complaining, if we always buy food when max is used there is a bug
+                                foreach (itemModifier currItemMod in player.modifiers)
+                                    if (currItemMod.visionItem.itemName == itemToSell && currItemMod.visionPlanet == player.currLocation)
+                                        itemToSellModifier = currItemMod;
+
                                 if (e.Message.Content.ToLower().Contains("max"))
                                 {
                                     foreach(playerItem playerItem in player.playerItems)
@@ -321,6 +332,7 @@ namespace bazillionaire
                                 }
                                 player.nextSaleItem = pItem;
                                 player.nextSaleQuantity = quantityToSell;
+                                player.nextSaleModifier = itemToSellModifier;
                                 player.selling = true;
                                 await e.Message.RespondAsync($"Confirm sell ({quantityToSell} {itemToSell} @ {pItem.pricePerUnit.ToString("N2")} shmeckles)? (y/n)");
                             }
@@ -789,7 +801,7 @@ namespace bazillionaire
             playerItems.Add(new playerItem("Electronics"));
             playerItems.Add(new playerItem("Ore"));
             playerItems.Add(new playerItem("Fuel"));
-            playerItems.Add(new playerItem("Goods"));
+            playerItems.Add(new playerItem("Consumer Goods"));
             playerItems.Add(new playerItem("Aoemebae"));
 
             currLocation = startLocation;
@@ -827,22 +839,10 @@ namespace bazillionaire
                 await responseChannel.SendMessageAsync($"Not enough storage space left cant buy that much!");
                 return;
             }
-            itemModifier saleModifier = new itemModifier(currLocation, nextSaleItem); //Defualt version just incase nothing is found
-            bool foundItem = false;
-            foreach (itemModifier modifierForItem in modifiers)
-                if (modifierForItem.visionItem == nextSaleItem)
-                {
-                    foundItem = true;
-                    saleModifier = modifierForItem;
-                }
-            if (!foundItem)
-                throw new System.ArgumentException(); // Didnt find the modifier object for this sale );
 
-
-
-            if (nextSaleQuantity > ((nextSaleItem.quantityLeft * saleModifier.skewPercentageAvailable) + saleModifier.skewAvailable))
+            if (nextSaleQuantity > ((nextSaleItem.quantityLeft * nextSaleModifier.skewPercentageAvailable) + nextSaleModifier.skewAvailable))
                 await responseChannel.SendMessageAsync($"You cant buy what the planet doesnt have enough of ):<");
-            else if (nextSaleQuantity * (((nextSaleItem.pricePerUnit * saleModifier.skewPercentagePrice) + saleModifier.skewPrice)) > shmeckles)
+            else if (nextSaleQuantity * (((nextSaleItem.pricePerUnit * nextSaleModifier.skewPercentagePrice) + nextSaleModifier.skewPrice)) > shmeckles)
                 await responseChannel.SendMessageAsync($"Sorry {username}, I cant give credit. Come back when you're a little MMMMMMMMMMMMMMMMMMM richer!");
             else // Nothing stopping us from making this purchase
             {
@@ -852,12 +852,12 @@ namespace bazillionaire
                     if (playerItem.itemName.ToLower() == nextSaleItem.itemName.ToLower()) //This is the item we're trying to manipulate. Make the sale
                     {
                         playerItem.quantityLeft += nextSaleQuantity;
-                        shmeckles -= (int)Math.Round(nextSaleQuantity * (((nextSaleItem.pricePerUnit * saleModifier.skewPercentagePrice) + saleModifier.skewPrice)));
+                        shmeckles -= (int)Math.Round(nextSaleQuantity * (((nextSaleItem.pricePerUnit * nextSaleModifier.skewPercentagePrice) + nextSaleModifier.skewPrice)));
 
                         storage -= nextSaleQuantity;
 
                         nextSaleItem.quantityLeft -= nextSaleQuantity;
-                        await responseChannel.SendMessageAsync($"Sucessfully bought {nextSaleQuantity} {nextSaleItem}s for {(int)Math.Round(nextSaleQuantity * nextSaleItem.pricePerUnit)} shmeckles.\n You now have {shmeckles} shmeckles!");
+                        await responseChannel.SendMessageAsync($"Sucessfully bought {nextSaleQuantity} {nextSaleItem}s for {(int)Math.Round(nextSaleQuantity * (((nextSaleItem.pricePerUnit * nextSaleModifier.skewPercentagePrice) + nextSaleModifier.skewPrice)))} shmeckles.\n You now have {shmeckles} shmeckles!");
                         return;
                     }
                 }
@@ -914,34 +914,35 @@ namespace bazillionaire
                 if(itemToCatalog.visionPlanet == catalogPlanet) //This is one of the items we want to display
                 {
                     if(itemToCatalog.upgradeLevel > 0 && catalogPlanet == currLocation) //If there are any upgrade modifiers and were on the planet we get all the info
-                        responseString += $"\n_{(itemToCatalog.visionItem.quantityLeft * itemToCatalog.skewPercentageAvailable) + itemToCatalog.skewAvailable}_ units of **{itemToCatalog.visionItem.itemName}** at a price of *{((itemToCatalog.visionItem.pricePerUnit * itemToCatalog.skewPercentagePrice) + itemToCatalog.skewPrice).ToString("N2")} shmeckles* | Production Level: {itemToCatalog.visionItem.productionRate} (Adv. Upgrade)";
+                        responseString += $"\n_{(itemToCatalog.visionItem.quantityLeft * itemToCatalog.skewPercentageAvailable) + itemToCatalog.skewAvailable}_ units of **{itemToCatalog.visionItem.itemName}** at a price of *{((itemToCatalog.visionItem.pricePerUnit * itemToCatalog.skewPercentagePrice) + itemToCatalog.skewPrice).ToString("N2")}* shmeckles | Production Level: {itemToCatalog.visionItem.productionRate} (Adv. Upgrade)";
                     else if (itemToCatalog.upgradeLevel > 0) // Otherwise we only get some of the info depending on the level
                     {
                         if (itemToCatalog.upgradeLevel == 1)
-                            responseString += $"\n_{(itemToCatalog.visionItem.quantityLeft * itemToCatalog.skewPercentageAvailable) + itemToCatalog.skewAvailable}_ units of **{itemToCatalog.visionItem.itemName}** at a price of * ??? shmeckles | Not enough vision. Buy more upgrades!*";
+                            responseString += $"\n_{(itemToCatalog.visionItem.quantityLeft * itemToCatalog.skewPercentageAvailable) + itemToCatalog.skewAvailable}_ units of **{itemToCatalog.visionItem.itemName}** at a price of *???* shmeckles | Not enough vision. Buy more upgrades!*";
                         else if (itemToCatalog.upgradeLevel == 2)
-                            responseString += $"\n_{(itemToCatalog.visionItem.quantityLeft * itemToCatalog.skewPercentageAvailable) + itemToCatalog.skewAvailable}_ units of **{itemToCatalog.visionItem.itemName}** at a price of *{((itemToCatalog.visionItem.pricePerUnit * itemToCatalog.skewPercentagePrice) + itemToCatalog.skewPrice).ToString("N2")} shmeckles*";
+                            responseString += $"\n_{(itemToCatalog.visionItem.quantityLeft * itemToCatalog.skewPercentageAvailable) + itemToCatalog.skewAvailable}_ units of **{itemToCatalog.visionItem.itemName}** at a price of *{((itemToCatalog.visionItem.pricePerUnit * itemToCatalog.skewPercentagePrice) + itemToCatalog.skewPrice).ToString("N2")}* shmeckles*";
                         else
-                            responseString += $"\n_{(itemToCatalog.visionItem.quantityLeft * itemToCatalog.skewPercentageAvailable) + itemToCatalog.skewAvailable}_ units of **{itemToCatalog.visionItem.itemName}** at a price of *{((itemToCatalog.visionItem.pricePerUnit * itemToCatalog.skewPercentagePrice) + itemToCatalog.skewPrice).ToString("N2")} shmeckles* | Production Level: {itemToCatalog.visionItem.productionRate} (Adv. Upgrade)";
+                            responseString += $"\n_{(itemToCatalog.visionItem.quantityLeft * itemToCatalog.skewPercentageAvailable) + itemToCatalog.skewAvailable}_ units of **{itemToCatalog.visionItem.itemName}** at a price of *{((itemToCatalog.visionItem.pricePerUnit * itemToCatalog.skewPercentagePrice) + itemToCatalog.skewPrice).ToString("N2")}* shmeckles | Production Level: {itemToCatalog.visionItem.productionRate} (Adv. Upgrade)";
                     }
                     else // If there arent any upgrades at all then we only show basic information depending on the context
                     {
                         if (currLocation != catalogPlanet) //We know absolutely nothing about this item.
-                            responseString += $"\n_??? units of **{itemToCatalog.visionItem.itemName}** at a price of *??? shmeckles* | No vision. Buy upgrades at Shin-Akihabara!";
+                            responseString += $"\n_???_ units of **{itemToCatalog.visionItem.itemName}** at a price of *???* shmeckles | No vision. Buy upgrades at Shin-Akihabara!";
                         else
                         {
-                            responseString += $"\n_{(itemToCatalog.visionItem.quantityLeft * itemToCatalog.skewPercentageAvailable) + itemToCatalog.skewAvailable}_ units of **{itemToCatalog.visionItem.itemName}** at a price of *{itemToCatalog.visionItem.itemName}** at a price of *{((itemToCatalog.visionItem.pricePerUnit * itemToCatalog.skewPercentagePrice) + itemToCatalog.skewPrice).ToString("N2")} shmeckles*"; //We can display atleast basic info about this item because we're on the planet
+                            responseString += $"\n*{(itemToCatalog.visionItem.quantityLeft * itemToCatalog.skewPercentageAvailable) + itemToCatalog.skewAvailable}* units of **{itemToCatalog.visionItem.itemName}** at a price of *{((itemToCatalog.visionItem.pricePerUnit * itemToCatalog.skewPercentagePrice) + itemToCatalog.skewPrice).ToString("N2")}* shmeckles"; //We can display atleast basic info about this item because we're on the planet
                         }
                     }
 
                 }
             }
-            responseString += "========================================";
+            responseString += "\n========================================";
             await responseChannel.SendMessageAsync(responseString);
         }
 
         public planetItem nextSaleItem { get; set; }
         public int nextSaleQuantity { get; set; }
+        public itemModifier nextSaleModifier { get; set; }
         public bool buying { get; set; } //Only true when the player is considering a purchase
         public bool selling { get; set; } //Only true when the player is considering a sale
 
@@ -1030,7 +1031,7 @@ namespace bazillionaire
         public string itemName { get; private set; }
         public int quantityLeft { get; set; }
     }
-    public class itemModifier //Constant vision on a single item for the player. These are bought
+    public class itemModifier //Modifiers for a single planet item
     {
         public itemModifier(planet visionPlanet, planetItem visionItem)
         {
@@ -1945,7 +1946,6 @@ namespace bazillionaire
         public override void storyWait(planet currLocation, player playerThatTriggered) { return; }
         public override void storyProfit(int profit, player playerThatTriggered) { return; }
     }
-
     public class malfunctioningSpider : storyEventInterface
     {
         public malfunctioningSpider(DiscordChannel responseChannel) : base(responseChannel) { }
@@ -1956,7 +1956,7 @@ namespace bazillionaire
             {
                 aquarion = arrivalLocation;
                 Random random = new Random();
-                if(random.Next(1,8) == 1)
+                if(random.Next(1,5) == 1)
                 {
                     responseChannel.SendMessageAsync("*On Aquarion, most of the ice is extracted from the planet’s crust using specialized mobile mining stations- colloquially known as “spiders” due to their multi-legged means of transportation.  These spiders are large and numerous enough to be visible from orbit, and any self-respecting mining firm owns at least a modest fleet of them if they’re looking to make any money.*\n*Unfortunately, both the temperature and the relative lack of an atmosphere tend to wreak havoc on the sensitive machinery of the spiders, and as such it’s common for them to require regular maintenance, or even break down in extreme circumstances.*\n*There’s a message posted across many local communications channels stating that a local mining firm has suffered catastrophic damage to one of their few spiders, to the extent that they’ll need to order a substantial amount of parts from Persepolis to cover the repairs.  They’re requesting assistance from third-party traders to fulfill some of their deliveries at a reduced price.*\n(Make a choice)\n1) **Take on one of these contracts** (Buy random amount of water at 50% market price)\n2) **Let someone else handle this**");
                     started = true;
@@ -1979,6 +1979,10 @@ namespace bazillionaire
                             if((water.pricePerUnit) * maxBuy > playerThatTriggered.shmeckles)
                             {
                                 maxBuy = (int)(playerThatTriggered.shmeckles / water.pricePerUnit) - 1;
+                                if (maxBuy > water.quantityLeft)
+                                    maxBuy = water.quantityLeft;
+                                if (maxBuy > playerThatTriggered.storage)
+                                    maxBuy = playerThatTriggered.storage;
                             }
                             playerThatTriggered.nextSaleItem = water;
                         }
@@ -2047,14 +2051,16 @@ namespace bazillionaire
                     }
                 }
             }
-            else if (started) //We arrived somewhere else besides persepolis turn off the modifiers
+            else if (started && arrivalLocation.planetName != "Persepolis") //We arrived somewhere else besides persepolis turn off the modifiers
             {
                 started = false;
+                Console.WriteLine("Ressetting Prices");
                 foreach (itemModifier reduceItem in playerThatTriggered.modifiers)
                 {
-                    if (reduceItem.visionPlanet.planetName == "Arrakis") // Return the availability to normal so when the player returns to persepolis the event is over.
+                    if (reduceItem.visionPlanet.planetName == "Persepolis") // Return the availability to normal so when the player returns to persepolis the event is over.
                     {
                         reduceItem.skewPercentagePrice = 1;
+                        Console.WriteLine("Ressetting Prices  FOR SURE");
                     }
                 }
             }
@@ -2075,4 +2081,8 @@ namespace bazillionaire
         public override void storyWait(planet currLocation, player playerThatTriggered) { return; }
         public override void storyProfit(int profit, player playerThatTriggered) { return; }
     }
+
+
+
+
 }
